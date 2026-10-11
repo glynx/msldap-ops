@@ -241,15 +241,42 @@ async def resolve(client, sids):
 	return names
 
 
+def prefill_sid_names(client, cache, sids):
+	"""Puts the account names of cached objects into msldap's SID cache, so that resolv_sid does
+	not search for them."""
+	if cache is None or not hasattr(client, '_sid_cache'):
+		return
+	known = cache.account_names()
+	for sid in sids:
+		name = known.get(sid.upper())
+		if name is not None:
+			client._sid_cache.setdefault(sid.upper(), name)
+
+
 async def collect(client, dn, cache=None):
-	"""(security descriptor, entries, principal names) of one object; one base search with the
-	SD flags control (owner, group, DACL) plus the SID lookups."""
+	"""(security descriptor, entries, principal names, source) of one object, or None.
+
+	The security descriptor comes from any cached search that returned the object with
+	nTSecurityDescriptor and the SD flags control (e.g. bofhound_collect), otherwise from one base
+	search with the SD flags control. SIDs are resolved by name from cached objects first, the rest
+	with one search each. source: None (live) or when the cached result was stored."""
+	import datetime
+
+	import msldap.connection
+
+	from msldap_ops.cache import SD_FLAGS_OID_HEX
 	from msldap_ops.templates import sd_flags_control
-	raw = None
-	async for entry, err in client.pagedsearch('(objectClass=*)', ['nTSecurityDescriptor'], controls=[sd_flags_control()], tree=dn, search_scope=0):
-		if err is not None:
-			raise err
+	raw, source = None, None
+	hit = cache.find_attribute(dn, 'nTSecurityDescriptor', needs_control=SD_FLAGS_OID_HEX) if cache is not None else None
+	if hit is not None:
+		entry = msldap.connection.convert_result(hit[0])
 		raw = entry['attributes'].get('nTSecurityDescriptor')
+		source = datetime.datetime.fromtimestamp(hit[1])
+	else:
+		async for entry, err in client.pagedsearch('(objectClass=*)', ['nTSecurityDescriptor'], controls=[sd_flags_control()], tree=dn, search_scope=0):
+			if err is not None:
+				raise err
+			raw = entry['attributes'].get('nTSecurityDescriptor')
 	if raw is None:
 		return None
 	sd = raw if isinstance(raw, SECURITY_DESCRIPTOR) else SECURITY_DESCRIPTOR.from_bytes(raw)
@@ -257,10 +284,11 @@ async def collect(client, dn, cache=None):
 	for sid in [sd.Owner, sd.Group] + [ace.Sid for ace in (sd.Dacl.aces if sd.Dacl else [])]:
 		if sid is not None and str(sid) not in sids:
 			sids.append(str(sid))
+	prefill_sid_names(client, cache, sids)
 	principals = await resolve(client, sids)
 	names = GuidNames(schema_names_from_cache(cache))
 	entries = [Entry(ace, principals.get(str(ace.Sid), str(ace.Sid)), names) for ace in (sd.Dacl.aces if sd.Dacl else [])]
-	return sd, entries, principals
+	return sd, entries, principals, source
 
 
 def fit_widths(rows, indent, width, wrap_columns):
@@ -312,8 +340,10 @@ def blocks(entries_rows, indent='  ', width=None):
 	return lines
 
 
-def format_acl(dn, sd, entries, principals, show='all', width=None):
+def format_acl(dn, sd, entries, principals, source=None, show='all', width=None):
 	lines = ['ACL of %s' % dn]
+	if source is not None:
+		lines[0] += '  (from the cache, %s)' % source.strftime('%Y-%m-%d %H:%M')
 	owner = str(sd.Owner) if sd.Owner is not None else None
 	if owner:
 		mark = '  %s owner is not privileged (can rewrite the DACL)' % MARK if not is_privileged(owner) else ''

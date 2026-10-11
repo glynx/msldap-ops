@@ -188,7 +188,11 @@ To get the DN of an account or group, `find jaime.lannister`, `find "Small Counc
 lists type, account name and DN. `acl . risky` shows only the marked entries, `acl . explicit` only the ones not inherited.
 
 Queries: the security descriptor (one base search with the SD flags control, so unprivileged users
-get owner and DACL) and one search per SID that is not well-known (cached). Attribute and class
+get owner and DACL) and one search per SID that is not well-known. Both come from the query cache
+when possible: the security descriptor from any earlier search that returned the object with the
+SD flags control (e.g. `bofhound_collect`, then the first line says `(from the cache, <time>)`), the
+names of SIDs from any cached object with `objectSid` and `sAMAccountName`. After
+`bofhound_collect`, `acl` therefore usually sends no query at all. Attribute and class
 GUIDs are named from a built-in table; others, like the LAPS attributes whose GUIDs differ per
 forest, are named if `bofhound_collect` (preset `schema`) put the schema into the cache.
 

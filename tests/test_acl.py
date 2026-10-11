@@ -49,7 +49,8 @@ def test_rights():
 
 
 def test_entries_are_decoded():
-	client, (sd, entries, principals) = collect()
+	client, (sd, entries, principals, source) = collect()
+	assert source is None  # no cache: live
 	assert client.calls == [('(objectClass=*)', ['nTSecurityDescriptor'], 'CN=g,DC=x', 0, '1.2.840.113556.1.4.801')]
 	by = {(e.principal, e.object): e for e in entries}
 	member = by[('NORTH\\jon.snow', 'member')]
@@ -136,3 +137,64 @@ def test_layout_follows_the_terminal_width():
 	assert '  allow         NORTH\\jon.snow' in narrow
 	assert '                WriteProperty: member (this object)  [!] Write' in narrow
 	assert all(len(line) <= 80 for line in narrow)
+
+
+def cached_sd_cache(tmp_path, controls):
+	"""A cache holding the object CN=g,DC=x with the test security descriptor and an account."""
+	from winacl.dtyp.sid import SID
+
+	from msldap_ops.cache import QueryCache, query_key
+
+	cache = QueryCache(str(tmp_path), persist=False)
+	sd = SECURITY_DESCRIPTOR.from_sddl(SDDL).to_bytes()
+	raws = [
+		{'objectName': b'CN=g,DC=x', 'attributes': [{'type': b'nTSecurityDescriptor', 'attributes': [sd]}]},
+		{'objectName': b'CN=jon.snow,DC=x', 'attributes': [
+			{'type': b'objectSid', 'attributes': [SID.from_string(D + '-1105').to_bytes()]},
+			{'type': b'sAMAccountName', 'attributes': [b'jon.snow']}]},
+	]
+
+	class Control:
+		def __init__(self, data):
+			self.data = data
+
+		def dump(self):
+			return self.data
+
+	params = {'base': 'DC=x', 'search_scope': 2, 'query': '(objectClass=*)', 'attributes': ['*', 'nTSecurityDescriptor'],
+		'controls': [Control(c) for c in controls]}
+	key, parts = query_key('pagedsearch', params)
+	cache.put(key, parts, raws)
+	return cache
+
+
+class SidCacheClient(FakeClient):
+	"""resolv_sid like msldap: names from _sid_cache need no search."""
+
+	def __init__(self):
+		super().__init__()
+		self._sid_cache = {}
+
+	async def resolv_sid(self, sid):
+		if sid.upper() in self._sid_cache:
+			return 'NORTH', self._sid_cache[sid.upper()], None
+		return await FakeClient.resolv_sid(self, sid)
+
+
+def test_security_descriptor_and_names_from_the_cache(tmp_path):
+	cache = cached_sd_cache(tmp_path, [b'1.2.840.113556.1.4.801 sd flags'])
+	client = SidCacheClient()
+	sd, entries, principals, source = asyncio.run(acl.collect(client, 'CN=g,DC=x', cache))
+	assert client.calls == []  # no search for the security descriptor
+	assert source is not None
+	assert D + '-1105' not in client.resolved  # known from the cache
+	assert principals[D + '-1105'] == 'NORTH\\jon.snow'
+	assert acl.format_acl('CN=g,DC=x', sd, entries, principals, source)[0].startswith('ACL of CN=g,DC=x  (from the cache, ')
+
+
+def test_cached_result_without_sd_flags_is_not_used(tmp_path):
+	# without the SD flags control the cached descriptor may be partial (or the SACL variant)
+	cache = cached_sd_cache(tmp_path, [b'1.2.840.113556.1.4.319 paged'])
+	client = SidCacheClient()
+	result = asyncio.run(acl.collect(client, 'CN=g,DC=x', cache))
+	assert len(client.calls) == 1 and result[3] is None

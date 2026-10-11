@@ -206,6 +206,9 @@ check "acl of the domain object" '^ACL of DC=north,DC=sevenkingdoms,DC=local$' "
 check "acl decodes the DCSync rights" 'ExtendedRight +Replicating Directory Changes All ' "$RESULTS/acl.txt"
 check "acl resolves principals" '^  allow .*\\Domain Admins ' "$RESULTS/acl.txt"
 check "getsd accepts paths" '^O:[A-Z0-9-]+G:' "$RESULTS/acl.txt"
+"$OPS" --no-log --opsec show --cache-dir "$RESULTS/cache-acl" "$URL" login "cache flush" "bofhound_collect domain,users,groups" acl >"$RESULTS/acl-cache.txt" 2>&1 || true
+check "acl takes the security descriptor from bofhound_collect" '^ACL of DC=north,DC=sevenkingdoms,DC=local  \(from the cache, ' "$RESULTS/acl-cache.txt"
+echo "   INFO  $(grep -E '^\[opsec\] acl:' "$RESULTS/acl-cache.txt" || echo 'acl: no LDAP queries')"
 check_cmd "no tracebacks in acl/getsd" bash -c "! grep -q 'Traceback' '$RESULTS/acl.txt'"
 
 echo

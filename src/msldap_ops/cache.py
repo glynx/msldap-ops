@@ -300,6 +300,47 @@ class QueryCache:
 			rows.append((int(now - v['stored']), len(v['entries']), q['base'], q['filter']))
 		return rows
 
+	# --- objects across all cached searches -----------------------------------
+	def find_attribute(self, dn, attribute, needs_control=None):
+		"""(raw entry, stored timestamp) of the newest cached result for dn that contains
+		attribute, or None. needs_control: hex OID that the search must have used (e.g. the SD
+		flags control, without it unprivileged users get no or another security descriptor)."""
+		if not self.enabled:
+			return None
+		dn, attribute = dn.lower(), attribute.lower()
+		now = time.time()
+		best = None
+		for item in self.queries.values():
+			if now - item['stored'] > self.ttl or (best is not None and item['stored'] <= best[1]):
+				continue
+			if needs_control and not any(needs_control in c for c in item['query']['controls']):
+				continue
+			for entry in item['entries']:
+				if entry['dn'].lower() == dn and any(t.lower() == attribute and v for t, v in entry['a']):
+					best = (entry, item['stored'])
+					break
+		if best is None:
+			return None
+		return raw_from_json(best[0]), best[1]
+
+	def account_names(self):
+		"""objectSid (string) -> sAMAccountName of every cached object that has both."""
+		from msldap_ops.privileged import sid_string
+		names = {}
+		now = time.time()
+		for item in sorted(self.queries.values(), key=lambda v: v['stored']):
+			if now - item['stored'] > self.ttl:
+				continue
+			for entry in item['entries']:
+				values = {t.lower(): v for t, v in entry['a']}
+				sid, sam = values.get('objectsid'), values.get('samaccountname')
+				if sid and sam:
+					try:
+						names[sid_string(base64.b64decode(sid[0])).upper()] = base64.b64decode(sam[0]).decode('utf-8', 'replace')
+					except Exception:
+						continue
+		return names
+
 	# --- hook listener ------------------------------------------------------
 	def query_entry(self, query, entry):
 		raw = getattr(entry, 'raw', None)
