@@ -5,7 +5,7 @@ from msldap.protocol.constants import SUBTREE
 from msldap.wintypes.asn1.sdflagsrequest import SDFlagsRequest, SDFlagsRequestValue
 from prompt_toolkit.completion import WordCompleter
 
-from msldap_ops import hooks, opsec, presets, privileged, templates
+from msldap_ops import hooks, navigation, opsec, presets, privileged, templates
 
 
 def sd_flags_control():
@@ -312,3 +312,78 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 
 	def _templates_completions(self):
 		return WordCompleter(['vulnerable', 'enabled'])
+
+	# --- navigation ---------------------------------------------------------
+	def _naming_contexts(self):
+		info = getattr(self.connection, '_serverinfo', None) or {}
+		ncs = info.get('namingContexts') or []
+		return [ncs] if isinstance(ncs, str) else list(ncs)
+
+	def _known_dns(self):
+		if self.cache is None:
+			return []
+		return [value[0] for value in self.cache.dns.values()]
+
+	async def do_cd(self, path):
+		"""Changes the current DN.
+
+		cd ..                  parent (not above the naming context of this DC)
+		cd ../..               two levels up
+		cd CN=Computers        relative to the current DN, also deeper: OU=Servers,OU=Tier0
+		cd <DN>                absolute, e.g. CN=Configuration,DC=... (any naming context of the DC)
+
+		Escaped commas in DNs (CN=Doe\\, John) are handled. Completion offers the children of the
+		current DN, every DN below it seen so far (query cache) and the naming contexts.
+		Lists the children of the new DN with one LDAP search (cached).
+		"""
+		if self.connection is None:
+			return await MSLDAPClientConsole.do_cd(self, path)
+		try:
+			target = navigation.resolve(path, self._current_dn, self._naming_contexts())
+		except ValueError as e:
+			print(e)
+			return False
+		return await MSLDAPClientConsole.do_cd(self, target)
+
+	def _cd_completions(self):
+		return navigation.DNCompleter(
+			get_current=lambda: self._current_dn,
+			get_known_dns=self._known_dns,
+			get_naming_contexts=self._naming_contexts,
+			get_children=lambda: [d.strip("'") for d in self.get_current_dirs()],
+		)
+
+	async def do_map(self, dn=None, depth='3'):
+		"""Tree of the DNs seen so far below a DN (default: the current DN).
+
+		map                    below the current DN, 3 levels
+		map <DN|path> [depth]  below another DN (relative paths and .. as for cd), depth 0 = all
+
+		Sends no LDAP query: it shows what the query cache has seen (every result of every
+		command), so it grows while you work. Nodes cut off by the depth show (+n) children.
+		"""
+		if self.connection is None or self._current_dn is None:
+			print('Not connected, run login first')
+			return False
+		if self.cache is None:
+			print('The DN index is part of the query cache, which is disabled (--no-cache)')
+			return False
+		try:
+			depth = int(depth)
+		except ValueError:
+			print("Invalid depth '%s'" % depth)
+			return False
+		try:
+			root = navigation.resolve(dn, self._current_dn, self._naming_contexts()) if dn else self._current_dn
+		except ValueError as e:
+			print(e)
+			return False
+		lines = navigation.tree_lines(self._known_dns(), root, depth or None)
+		for line in lines:
+			print(line)
+		if len(lines) == 1:
+			print('(nothing seen below this DN yet)')
+		return True
+
+	def _map_completions(self):
+		return self._cd_completions()

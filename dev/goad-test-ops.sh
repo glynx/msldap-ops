@@ -181,6 +181,17 @@ check "after a flush the queries are sent again" '^\[opsec\] find_admins: [0-9]+
 check "templates reuses the ADCS data of bofhound_collect" '^\[opsec\] templates: 2 LDAP queries sent, 2 answered from the cache$' "$RESULTS/cache-4.txt"
 
 echo
+echo "== navigation"
+"$OPS" --no-log --cache-dir "$RESULTS/cache-nav" "$URL" login "cd .." "cd CN=Users" "cd .." "map . 2" \
+  "cd CN=Configuration,DC=sevenkingdoms,DC=local" map "cd ../.." >"$RESULTS/navigation.txt" 2>&1 || true
+check "cd .. at the domain root is explained" 'is the top of its naming context on this DC\. Naming contexts of this DC: ' "$RESULTS/navigation.txt"
+check "map shows what cd has seen" '^(\||`)-- CN=Users$' "$RESULTS/navigation.txt"
+check "map shows children of CN=Users" '^(\| |  )  (\||`)-- CN=' "$RESULTS/navigation.txt"
+check "cd into another naming context (Configuration)" '^(\||`)-- CN=Schema$' "$RESULTS/navigation.txt"
+check "cd ../.. above the Configuration NC is refused" 'CN=Configuration,DC=sevenkingdoms,DC=local is the top of its naming context' "$RESULTS/navigation.txt"
+check_cmd "no raw referral errors" bash -c "! grep -q 'referral' '$RESULTS/navigation.txt'"
+
+echo
 echo "== bofhound import"
 # dnsNode parsing needs bofhound >= 0.4.21; without a version uvx may reuse an older cached one
 BOFHOUND=(uvx --from 'bofhound>=0.4.21' bofhound)

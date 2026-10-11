@@ -36,11 +36,13 @@
 - [x] Query cache with TTL, persisted per server/account as JSON, `cache` command with flush;
       index of all DNs seen so far
 - [ ] Verify the cache against GOAD (`dev/goad-test-ops.sh`)
-- [ ] `cd` completion from the cache instead of only the current level
-- [ ] `cd ..` above the naming context of the DC (e.g. from DC=north,... to DC=sevenkingdoms,...)
+- [x] `cd` completion from the cache instead of only the current level
+- [x] `cd ..` above the naming context of the DC (e.g. from DC=north,... to DC=sevenkingdoms,...)
       fails with a raw "referral" error; explain it and offer the naming contexts of the DC instead
       (msldap also splits the DN at the first comma, escaped commas break `cd ..`)
-- [ ] `map` command: tree of the visited structure, optionally as a toolbar below the prompt
+- [x] `map` command: tree of the visited structure
+- [ ] Verify navigation against GOAD (`dev/goad-test-ops.sh`), try the completion interactively
+- [ ] `map` as a toolbar below the prompt (optional)
 
 ## ADCS
 

@@ -14,6 +14,8 @@ Features:
 
 - **Query cache** (`cache`): repeated searches are answered from earlier results, persisted per
   server and account.
+- **Navigation**: `cd` with relative paths, `..` and completion from everything seen so far, `map`
+  as a tree of the known structure.
 - **Opsec modes** (`opsec`): show, confirm or suppress every LDAP search before it is sent, for all
   commands including the msldap built-ins.
 - **Certificate templates** (`templates`) in a certipy-like layout with decoded flags.
@@ -127,6 +129,21 @@ principals of the enrollment and object control permissions. Vulnerabilities (ES
 checked for the token of the bound user; an account bound through a trust is checked as a low
 privileged user of the connected domain. The table needs 4 LDAP searches, the details additionally
 resolve the SIDs of the permissions.
+
+## Navigation
+
+```text
+cd ..                    parent DN (refused above the naming context of the DC, with a hint)
+cd ../..                 two levels up
+cd CN=Computers          relative to the current DN, also deeper: OU=Servers,OU=Tier0
+cd <DN>                  absolute, any naming context of the DC (e.g. CN=Configuration,...)
+map [DN|path] [depth]    tree of the DNs seen so far below a DN (default: current, 3 levels)
+```
+
+`cd` completes the children of the current DN, every DN below it that any command has seen so far
+and the naming contexts of the DC. Escaped commas (`CN=Doe\, John`) are handled; completions are
+quoted so that aiocmd's argument parsing keeps them intact. `map` sends no query, it draws the DN
+index of the query cache.
 
 ## Query cache
 
