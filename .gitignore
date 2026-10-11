@@ -12,3 +12,6 @@ dev/results/
 
 # query logs written to the working directory
 msldap-ops-logs/
+
+# local GOAD lab settings
+dev/goad.env
