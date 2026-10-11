@@ -199,7 +199,7 @@ def _wrap_search(original, controls_param, passthrough=None):
 			# the keepalive has to reach the server, it is neither answered from nor stored in the cache
 			_cache.bind(self)
 			key, parts = query_key(original.__name__, params)
-			raws = _cache.get(key)
+			raws = _cache.get(key, parts)
 			if raws is not None:
 				info.cached = True
 				if _gate is not None and hasattr(_gate, 'cached'):

@@ -10,6 +10,11 @@ the caller stopped early - unless the search can only have one result (base scop
 filter on distinguishedName, objectSid, objectGUID or sAMAccountName), then the first result is the
 complete answer. Any add/modify/delete drops the cached queries.
 
+A broader cached search answers a narrower one as well: same filter and controls, the wanted base DN
+at or below the cached one (subtree), all wanted attributes included (explicitly, or through '*' for
+attributes '*' returns). E.g. after bofhound_collect, 'templates' gets the templates and enrollment
+services from the cache.
+
 Besides the queries the cache keeps an index of every DN seen in any result (live or cached), for
 navigation.
 
@@ -54,6 +59,67 @@ UNIQUE_FILTER = re.compile(r'^\((distinguishedName|objectSid|objectGUID|sAMAccou
 def is_unique(params):
 	"""True if the search can return at most one object."""
 	return params.get('search_scope') == 0 or bool(UNIQUE_FILTER.match(params.get('query') or ''))
+
+
+# attributes '*' does not return: operational and constructed ones. msDS-* are all treated like this,
+# many of them are constructed (msDS-User-Account-Control-Computed, msDS-PrincipalName, ...)
+NOT_IN_STAR = {
+	'ntsecuritydescriptor', 'tokengroups', 'tokengroupsglobalanduniversal', 'tokengroupsnogcacceptable',
+	'allowedattributes', 'allowedattributeseffective', 'allowedchildclasses', 'allowedchildclasseseffective',
+	'canonicalname', 'createtimestamp', 'modifytimestamp', 'structuralobjectclass', 'subschemasubentry',
+	'sdrightseffective', 'primarygrouptoken', 'parentguid', 'fromentry', 'possibleinferiors', 'entryttl',
+	'attributetypes', 'objectclasses', 'ditcontentrules', 'extendedattributeinfo', 'extendedclassinfo',
+	'1.1',
+}
+
+
+SD_FLAGS_OID_HEX = b'1.2.840.113556.1.4.801'.hex()
+
+
+def in_star(attribute):
+	attribute = attribute.lower()
+	return attribute not in NOT_IN_STAR and not attribute.startswith('msds-')
+
+
+def _dn_under(dn, base):
+	"""True if dn is base or below it (both lowercased)."""
+	return dn == base or dn.endswith(',' + base)
+
+
+def covers(cached, wanted):
+	"""True if the results of the cached search contain everything the wanted search returns."""
+	if cached['filter'].lower() != (wanted['filter'] or '').lower():
+		return False
+	if cached['types_only'] != wanted['types_only']:
+		return False
+	if cached['controls'] != wanted['controls']:
+		# the SD flags control only changes nTSecurityDescriptor
+		without_sd = [c for c in cached['controls'] if SD_FLAGS_OID_HEX not in c]
+		if without_sd != wanted['controls'] or 'ntsecuritydescriptor' in wanted['attributes']:
+			return False
+	if cached['base'] != wanted['base'] and not (cached['scope'] == 2 and wanted['scope'] == 2 and _dn_under(wanted['base'], cached['base'])):
+		return False
+	if cached['base'] == wanted['base'] and cached['scope'] != wanted['scope']:
+		return False
+	have = set(cached['attributes'])
+	for attribute in wanted['attributes']:
+		if attribute in have:
+			continue
+		if attribute == '*' or '*' not in have or not in_star(attribute):
+			return False
+	return True
+
+
+def project(raw, wanted):
+	"""Reduces a cached result to the attributes the wanted search asks for."""
+	attributes = set(wanted['attributes'])
+	star = '*' in attributes
+	keep = []
+	for attribute in raw['attributes']:
+		name = attribute['type'].decode().lower() if isinstance(attribute['type'], bytes) else str(attribute['type']).lower()
+		if name in attributes or (star and in_star(name)):
+			keep.append(attribute)
+	return {'objectName': raw['objectName'], 'attributes': keep}
 
 
 def _control_key(control):
@@ -161,16 +227,27 @@ class QueryCache:
 			del self.queries[key]
 			self._dirty = True
 
-	def get(self, key):
-		"""Raw results of a cached search, or None."""
+	def get(self, key, parts=None):
+		"""Raw results of a cached search, or None.
+
+		With parts, a broader cached search can answer as well: same filter and controls, a base
+		DN at or above the wanted one (subtree scope) and all wanted attributes included; its
+		results are reduced to the wanted base and attributes.
+		"""
 		if not self.enabled:
 			return None
+		now = time.time()
 		item = self.queries.get(key)
-		if item is None or time.time() - item['stored'] > self.ttl:
-			self.misses += 1
-			return None
-		self.hits += 1
-		return [raw_from_json(e) for e in item['entries']]
+		if item is not None and now - item['stored'] <= self.ttl:
+			self.hits += 1
+			return [raw_from_json(e) for e in item['entries']]
+		if parts is not None:
+			for item in self.queries.values():
+				if now - item['stored'] <= self.ttl and covers(item['query'], parts):
+					self.hits += 1
+					return [project(raw_from_json(e), parts) for e in item['entries'] if _dn_under(e['dn'].lower(), parts['base'])]
+		self.misses += 1
+		return None
 
 	def put(self, key, parts, raws):
 		if not self.enabled:

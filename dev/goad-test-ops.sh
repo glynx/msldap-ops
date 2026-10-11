@@ -177,6 +177,8 @@ check "a new session reuses the persisted cache" '^\[opsec\] find_admins: no LDA
 "$OPS" "${CACHE_ARGS[@]}" "$URL" login "cache flush" find_admins >"$RESULTS/cache-3.txt" 2>&1 || true
 check "flush empties the cache" '^Dropped [0-9]+ cached quer(y|ies) and the DN index$' "$RESULTS/cache-3.txt"
 check "after a flush the queries are sent again" '^\[opsec\] find_admins: [0-9]+ LDAP quer(y|ies) issued$' "$RESULTS/cache-3.txt"
+"$OPS" "${CACHE_ARGS[@]}" "$URL" login "cache flush" "bofhound_collect adcs" templates >"$RESULTS/cache-4.txt" 2>&1 || true
+check "templates reuses the ADCS data of bofhound_collect" '^\[opsec\] templates: 2 LDAP queries issued, 2 answered from the cache$' "$RESULTS/cache-4.txt"
 
 echo
 echo "== bofhound import"

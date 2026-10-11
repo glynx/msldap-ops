@@ -223,3 +223,75 @@ async def test_cache_command(cached, capsys):
 	assert await console.do_cache('off') is True and not cached.enabled
 	assert await console.do_cache('flush') is True
 	assert 'Dropped 1 cached query and the DN index' in capsys.readouterr().out
+
+
+def parts(base='cn=public key services,cn=services,cn=configuration,dc=x', scope=2, flt='(objectClass=pKICertificateTemplate)', attrs=('*', 'ntsecuritydescriptor'), controls=('sd',)):
+	return {'kind': 'pagedsearch', 'base': base, 'scope': scope, 'filter': flt, 'attributes': sorted(attrs), 'controls': list(controls), 'types_only': False}
+
+
+def test_covers():
+	from msldap_ops.cache import covers
+	collect = parts()
+	templates = parts(base='cn=certificate templates,' + collect['base'], attrs=('cn', 'name', 'mspki-certificate-name-flag', 'ntsecuritydescriptor', 'pkiexpirationperiod'))
+	assert covers(collect, templates)
+	# nTSecurityDescriptor is not part of '*'
+	assert not covers(parts(attrs=('*',)), templates)
+	# constructed attributes are not part of '*'
+	assert not covers(collect, parts(attrs=('msds-user-account-control-computed',)))
+	assert not covers(collect, parts(attrs=('tokengroups',)))
+	# '*' cannot be served from an explicit attribute list
+	assert not covers(parts(attrs=('cn',)), parts(attrs=('*',)))
+	assert not covers(collect, parts(flt='(objectClass=user)'))
+	# the SD flags control only matters for nTSecurityDescriptor
+	sd_flags = b'1.2.840.113556.1.4.801'.hex()
+	with_sd = parts(controls=(sd_flags,))
+	assert covers(with_sd, parts(controls=(), attrs=('name', 'certificatetemplates')))
+	assert not covers(with_sd, parts(controls=()))
+	assert not covers(parts(controls=('other',)), parts(controls=(), attrs=('name',)))
+	# a narrower cached base or another scope does not cover
+	assert not covers(templates, collect)
+	assert not covers(collect, parts(base='cn=certificate templates,' + collect['base'], scope=1))
+	assert not covers(collect, parts(scope=1))
+	# 'cn=services,...' is not below 'cn=public key services,...' although it is a suffix
+	assert not covers(parts(base='services,dc=x'), parts(base='cn=services,dc=x'))
+
+
+async def test_broader_cached_search_answers_a_narrower_one(cached):
+	pki = 'CN=Public Key Services,CN=Services,CN=Configuration,DC=x'
+	tpl = raw_entry('CN=ESC1,CN=Certificate Templates,' + pki)
+	ca = raw_entry('CN=ESSOS-CA,CN=Enrollment Services,' + pki)
+	conn = CountingConnection([tpl, ca])
+	from msldap.protocol.messages import Control
+	# as msldap's client passes them to the connection
+	sd = [Control({'controlType': b'1.2.840.113556.1.4.801', 'criticality': True, 'controlValue': b'0\x03\x02\x01\x07'})]
+	await collect(conn.pagedsearch(pki, '(objectClass=pKICertificateTemplate)', [b'*', b'nTSecurityDescriptor'], controls=sd))
+
+	results = await collect(conn.pagedsearch('CN=Certificate Templates,' + pki, '(objectClass=pKICertificateTemplate)', [b'objectSid', b'nTSecurityDescriptor'], controls=sd))
+	assert conn.server_calls == 1
+	# reduced to the wanted base and attributes
+	assert [e['objectName'] for e, _ in results] == ['CN=ESC1,CN=Certificate Templates,' + pki]
+	assert set(results[0][0]['attributes']) == {'objectSid', 'nTSecurityDescriptor'}
+
+
+async def test_templates_after_bofhound_collect_come_from_the_cache(cached):
+	"""Real msldap client: the controls are built by msldap, the keys must still match."""
+	from msldap.client import MSLDAPClient
+
+	from msldap_ops import presets, templates
+	from msldap_ops.shell import sd_flags_control
+
+	config = 'CN=Configuration,DC=x'
+	pki = templates.pki_base(config)
+	conn = CountingConnection([raw_entry('CN=ESC1,CN=Certificate Templates,' + pki), raw_entry('CN=CA,CN=Enrollment Services,' + pki)])
+	client = MSLDAPClient(None, None, connection=conn)
+	client._tree = 'DC=x'
+	client._serverinfo = {'defaultNamingContext': 'DC=x', 'configurationNamingContext': config}
+
+	for q in presets.resolve(['adcs'], client._serverinfo):
+		controls = [sd_flags_control()] if q.wants_sd else None
+		await collect(client.pagedsearch(q.filter, q.attributes, controls=controls, tree=q.base))
+	calls = conn.server_calls
+
+	await collect(client.pagedsearch('(objectClass=pKIEnrollmentService)', templates.CA_ATTRIBUTES, tree='CN=Enrollment Services,' + pki))
+	await collect(client.pagedsearch('(objectClass=pKICertificateTemplate)', templates.TEMPLATE_ATTRIBUTES, controls=[templates.sd_flags_control()], tree='CN=Certificate Templates,' + pki))
+	assert conn.server_calls == calls
