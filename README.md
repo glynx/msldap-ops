@@ -12,9 +12,9 @@ Features:
 - **Collection presets** for bofhound, split per object type (users, computers, groups, OUs, GPOs,
   schema, ADCS, ...), so that no single query returns the whole directory.
 
-Planned:
+- **Privileged accounts** (`admins`): recursive members of the protected groups, found by SID, with
+  their risky settings.
 
-- **Query presets** for privileged accounts.
 - **Extended shell**: all msldap shell commands plus the msldap-ops commands.
 
 msldap-ops currently depends on the [glynx/msldap](https://github.com/glynx/msldap) fork, which carries
@@ -81,6 +81,21 @@ RootDSE, so Configuration and Schema are found on child domain DCs as well.
 
 The presets cover the domain the DC belongs to. For other domains of the forest or trusted forests,
 connect to one of their DCs and run `collect` again.
+
+## Privileged accounts
+
+`admins` lists the recursive members of Domain Admins, Enterprise/Schema/Enterprise Key Admins,
+Administrators, Account/Server/Print/Backup Operators, Key Admins, Group Policy Creator Owners,
+Domain Controllers and DnsAdmins. Groups are found by SID, so localized names work. Per account:
+
+- `kerberoastable` (user with SPN), `asrep-roastable`, `password-not-required`,
+  `password-never-expires`, `unconstrained-delegation` (not reported for DCs)
+- `delegable`: neither "sensitive and cannot be delegated" nor in Protected Users
+- `disabled`, pwdLastSet and lastLogonTimestamp
+
+It also lists `adminCount=1` users that are no longer in any of these groups. Direct members from
+other domains (foreign security principals, forest root groups) are shown with their DN. The forest
+root groups can only be listed on a DC of the forest root.
 
 In the shell, `log` shows the log files, `log off` / `log on` pause and resume logging.
 `--log-dir` changes the directory, `--no-log` disables logging completely.

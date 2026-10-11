@@ -7,7 +7,7 @@
 #   dev/goad-test-ops.sh
 #
 # Uses the same configuration as goad-test-msldap.sh (dev/goad.env, see dev/goad.env.example):
-# NORTH_DC, ROOT_DC, LOWPRIV_USER, LOWPRIV_PASS. msldap is taken from the checkout configured in
+# NORTH_DC, ROOT_DC, LOWPRIV_USER, LOWPRIV_PASS, ROOT_USER, ROOT_PASS. msldap is taken from the checkout configured in
 # [tool.uv.sources] of pyproject.toml (../msldap), bofhound is run via uvx.
 #
 # Results end up in dev/results/ops-<timestamp>/ (git-ignored).
@@ -22,6 +22,9 @@ REPO_ROOT="$(cd "$HERE/.." && pwd)"
 NORTH_DC="${NORTH_DC:-192.168.56.11}"
 LOWPRIV_USER="${LOWPRIV_USER:-samwell.tarly}"
 LOWPRIV_PASS="${LOWPRIV_PASS:-Heartsbane}"
+ROOT_DC="${ROOT_DC:-192.168.56.10}"
+ROOT_USER="${ROOT_USER:-cersei.lannister}"
+ROOT_PASS="${ROOT_PASS:-il0vejaime}"
 
 RESULTS="$HERE/results/ops-$(date +%Y%m%d-%H%M%S)"
 LOGS="$RESULTS/msldap-ops-logs"
@@ -39,7 +42,11 @@ echo "   results:  $RESULTS"
 uv sync -q --project "$REPO_ROOT"
 OPS="$REPO_ROOT/.venv/bin/msldap-ops"
 PY="$REPO_ROOT/.venv/bin/python"
-URL="$("$PY" -c 'import sys; from urllib.parse import quote; d,u,p,h=sys.argv[1:]; print("ldap+ntlm-password://%s\\%s:%s@%s" % (d, quote(u, safe=""), quote(p, safe=""), h))' NORTH "$LOWPRIV_USER" "$LOWPRIV_PASS" "$NORTH_DC")"
+mkurl() { # mkurl <domain> <user> <pass> <host>
+  "$PY" -c 'import sys; from urllib.parse import quote; d,u,p,h=sys.argv[1:]; print("ldap+ntlm-password://%s\\%s:%s@%s" % (d, quote(u, safe=""), quote(p, safe=""), h))' "$@"
+}
+URL="$(mkurl NORTH "$LOWPRIV_USER" "$LOWPRIV_PASS" "$NORTH_DC")"
+ROOT_URL="$(mkurl SEVENKINGDOMS "$ROOT_USER" "$ROOT_PASS" "$ROOT_DC")"
 
 ops() { # ops <outfile> <commands...>
   local out="$1"
@@ -97,6 +104,21 @@ BEFORE="$(wc -l <"${LOG:-/dev/null}")"
 ops logoff.txt "log off" login "query (objectClass=domain) $ATTRS"
 AFTER="$(wc -l <"${LOG:-/dev/null}")"
 check_cmd "log off stops logging" test "$BEFORE" -eq "$AFTER"
+
+echo
+echo "== privileged accounts"
+"$OPS" --no-log "$URL" login admins >"$RESULTS/admins-north.txt" 2>&1 || true
+check "Domain Admins found by SID" '^  [^ ].* \(S-1-5-21-[0-9-]+-512\): [1-9][0-9]* accounts$' "$RESULTS/admins-north.txt"
+check "eddard.stark is a privileged account" '^  eddard\.stark +user ' "$RESULTS/admins-north.txt"
+check "Enterprise Admins explained on the child domain" 'Enterprise Admins \(S-1-5-21-[0-9-]+-519\): lives in the forest root' "$RESULTS/admins-north.txt"
+check "Administrators lists the forest root group as other-domain member" '\(other domain\) +direct CN=Enterprise Admins,' "$RESULTS/admins-north.txt"
+check "report completes" '^adminCount=1 users outside the privileged groups: [0-9]+$' "$RESULTS/admins-north.txt"
+check_cmd "no error section" bash -c "! grep -q '^Errors:' '$RESULTS/admins-north.txt'"
+
+"$OPS" --no-log "$ROOT_URL" login admins >"$RESULTS/admins-root.txt" 2>&1 || true
+check "Enterprise Admins listed on the forest root" '^  [^ ].* \(S-1-5-21-[0-9-]+-519\): [1-9][0-9]* accounts$' "$RESULTS/admins-root.txt"
+check "Schema Admins listed on the forest root" '^  [^ ].* \(S-1-5-21-[0-9-]+-518\): [0-9]+ accounts$' "$RESULTS/admins-root.txt"
+echo "   INFO  findings on north: $(grep -oE '(kerberoastable|asrep-roastable|password-never-expires|unconstrained-delegation|delegable|password-not-required)' "$RESULTS/admins-north.txt" | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
 
 echo
 echo "== bofhound import"
