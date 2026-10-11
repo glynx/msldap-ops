@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import inspect
 import os
 import re
 import shlex
@@ -15,6 +16,7 @@ from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.patch_stdout import patch_stdout
 
+from msldap_ops import __version__
 from msldap_ops import acl, hooks, laps, navigation, opsec, presets, privileged, records, templates, ui
 from msldap_ops import history as command_history
 from msldap_ops import transcript
@@ -57,6 +59,24 @@ class SearchWatch:
 		if not query.background:
 			self.cached_at = query.cached_at if query.cached else None
 
+# help categories: msldap-ops commands and the most used msldap built-ins, grouped. Commands not
+# listed here (the long tail of msldap built-ins) are shown under "Other" at the end. '*' marks a
+# command that changes the directory.
+HELP_CATEGORIES = [
+	('Session', ['login', 'opsec', 'log', 'transcript', 'cache', 'whoami', 'help', 'exit']),
+	('Navigation', ['cd', 'ls', 'cat', 'tree', 'map', 'find', 'query']),
+	('Enumeration', ['bofhound_collect', 'find_admins', 'templates', 'acl', 'getsd', 'laps',
+		'groupmembership', 'trusts', 'spns', 'asrep', 'pre2000', 'gmsa']),
+	('Lookup', ['sam2dn', 'sid2dn', 'dn2sid', 'dn2sam', 'sidresolv', 'user', 'machine']),
+	('Writing (changes the directory)', ['addusertogroup', 'deluserfromgroup', 'adduser', 'deluser',
+		'addcomputer', 'changeuserpw', 'enableuser', 'disableuser', 'unlockuser', 'addspn', 'delspn',
+		'addhostname', 'changesamaccountname', 'setsd', 'changeowner', 'addprivdcsync',
+		'addprivaddmember', 'add_genericwrite', 'addallowedtoactonbehalfofotheridentity', 'shadowcred',
+		'addenrollmentright', 'modify', 'delete', 'rm']),
+]
+WRITING_COMMANDS = set(HELP_CATEGORIES[-1][1])
+
+
 class MSLDAPOpsConsole(MSLDAPClientConsole):
 	"""msldap shell with additional msldap-ops commands. All msldap commands remain available."""
 
@@ -71,6 +91,47 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		# msldap sets '[<DN>]> ' in several places
 		m = re.match(r'^\[(.*)\]> $', value or '')
 		self._prompt_dn = m.group(1) if m else (value or '').strip().rstrip('>').strip()
+
+	def do_help(self, command=None):
+		"""Lists the commands grouped by category, or shows one command in detail.
+
+		help             commands by category (Session, Navigation, Enumeration, Lookup, Writing)
+		help <command>   usage and full description of one command
+		"""
+		if command is not None:
+			return MSLDAPClientConsole.do_help(self, command)
+		commands = set(self.command_list)
+		listed = set()
+
+		def usage(name):
+			text = self._get_command_usage(name, *self._get_command_args(name))
+			return text + ' *' if name in WRITING_COMMANDS else text
+
+		def first_line(name):
+			return (inspect.getdoc(self._get_command(name)) or '').split('\n')[0]
+
+		groups = []
+		for title, names in HELP_CATEGORIES:
+			present = [n for n in names if n in commands]
+			listed.update(present)
+			if present:
+				groups.append((title, present))
+		other = sorted(commands - listed - {'?'})
+		if other:
+			groups.append(('Other msldap commands', other))
+
+		print()
+		print('msldap-ops %s - commands' % __version__)
+		for title, names in groups:
+			# align the description column within each category
+			width = max(len(usage(n)) for n in names) + 2
+			print()
+			print('%s:' % title)
+			for name in names:
+				print(('  %-' + str(width) + 's%s') % (usage(name), first_line(name)))
+		print()
+		print("Use 'help <command>' or '<command> -h' for details. '*' in a usage means it changes the directory.")
+		return True
 
 	async def run(self):
 		"""aiocmd's run(), with patch_stdout(raw=True) so that colors reach the terminal."""

@@ -40,6 +40,9 @@ RULES = [
 	(r'^\[opsec\].*$', 'dim'),
 	(r'^send\? .*$', 'bold'),
 	(r'^(Privileged groups in|Privileged accounts:|adminCount=1 users|Name or description contains|Template |Errors:).*$', 'bold'),
+	# help category headings and title
+	(r'^(Session|Navigation|Enumeration|Lookup|Writing[^:]*|Other msldap commands):$', 'bold'),
+	(r'^msldap-ops .* - commands$', 'bold'),
 	(r'^  (Permissions|\[!\] Vulnerabilities.*)$', 'bold'),
 	(r'^ACL of .*?(?=  \(from cache: |$)', 'bold'),
 	(r'^  Access +Principal +Rights +Object +Applies to$', 'bold'),

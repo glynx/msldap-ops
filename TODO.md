@@ -84,8 +84,8 @@
 - [ ] Better command descriptions (parameters, allowed values) for the msldap-ops commands
 - [ ] Restructure the README: one section per command group (navigation, enumeration, ACLs/LAPS,
       writing, opsec, cache, output), with the parameters and allowed values of each command
-- [ ] Group `help` into basic commands and categories (navigation, enumeration, writing, ...);
-      the flat msldap list of ~90 commands is unreadable
+- [x] Group `help` into categories (Session, Navigation, Enumeration, Lookup, Writing, Other);
+      writing commands marked with `*`
 
 ## Release
 
