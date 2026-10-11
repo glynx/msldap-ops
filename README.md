@@ -142,6 +142,8 @@ ls [path|pattern] [full] children of the current DN (no query) or of a path, e.g
 cat [path] [attributes]  attributes of the current object (cat, cat .), of every child (cat *),
                          of matching children (cat CN=Domain*, cat ../OU=*) or of a DN/path
 query <filter> [attributes] [base|path] [base|one|sub]
+acl [path] [all|explicit|risky]  readable ACL of an object (owner, rights, object types, scope)
+getsd [path] [p|g]       msldap's raw security descriptor, with paths as for cd
 map [DN|path] [depth]    tree of the DNs seen so far below a DN (default: current, 3 levels)
 tree [DN] [level]        msldap's tree: queried live from the DC
 ```
@@ -152,6 +154,40 @@ quoted so that aiocmd's argument parsing keeps them intact. `cat` takes attribut
 list (`cat * cn,description`); msldap's order `cat [attributes] [path]` works as well. `map` sends no query, it draws the DN
 index of the query cache and may therefore be incomplete. `tree` asks the DC (one search per
 container down to the level) and fills the cache, so its results show up in `map` as well.
+
+## ACLs
+
+`acl` shows the security descriptor of an object decoded: owner, group and one line per DACL entry
+with allow/deny, the principal (resolved by name), the rights (FullControl, GenericWrite, WriteDacl,
+WriteProperty, ExtendedRight, ...), the object type the entry is limited to (an attribute like
+`member`, an extended right like `Reset Password`, a validated write like `Self-Membership`) and
+where it applies (this object, descendants, `user objects`).
+
+```text
+ACL of CN=Domain Admins,CN=Users,DC=north,DC=sevenkingdoms,DC=local
+  Owner: NORTH\Domain Admins
+  Group: NORTH\Domain Admins
+  DACL: 24 entries, 9 inherited
+
+  Access        Principal                    Rights         Object           Applies to
+  allow         NORTH\jon.snow               WriteProperty  member           this object   [!] Write member
+  allow         NORTH\helpdesk               ExtendedRight  Reset Password   user objects  [!] Reset Password
+  ...
+```
+
+`[!]` marks entries that let a principal outside the privileged groups take over the object: full
+control, GenericWrite, WriteDacl, WriteOwner, AllExtendedRights, Reset Password, the DCSync rights,
+writing `member`, `servicePrincipalName`, `msDS-KeyCredentialLink`,
+`msDS-AllowedToActOnBehalfOfOtherIdentity` and similar attributes, adding oneself to a group; and a
+non-privileged owner. Privileged are SYSTEM, Enterprise Domain Controllers, Administrators, Account
+Operators, Domain Admins, Domain Controllers, Schema/Enterprise Admins, (Enterprise) Key Admins and
+Enterprise Read-only Domain Controllers (of any domain in the forest), SELF and CREATOR OWNER.
+`acl . risky` shows only the marked entries, `acl . explicit` only the ones not inherited.
+
+Queries: the security descriptor (one base search with the SD flags control, so unprivileged users
+get owner and DACL) and one search per SID that is not well-known (cached). Attribute and class
+GUIDs are named from a built-in table; others, like the LAPS attributes whose GUIDs differ per
+forest, are named if `bofhound_collect` (preset `schema`) put the schema into the cache.
 
 ## Query cache
 

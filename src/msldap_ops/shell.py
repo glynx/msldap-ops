@@ -15,7 +15,7 @@ from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.patch_stdout import patch_stdout
 
-from msldap_ops import hooks, navigation, opsec, presets, privileged, records, templates, ui
+from msldap_ops import acl, hooks, navigation, opsec, presets, privileged, records, templates, ui
 from msldap_ops import history as command_history
 
 
@@ -629,6 +629,61 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		return await self._print_objects('(objectClass=*)', attrs, target, BASE, count=False)
 
 	def _cat_completions(self):
+		return self._cd_completions()
+
+	async def do_acl(self, path='.', show='all'):
+		"""Readable ACL of one object: owner, DACL with decoded rights, object types and scope.
+
+		acl [path] [all|explicit|risky]
+		  path      the object as for cd (default: the current DN)
+		  explicit  only entries set on the object itself (not inherited)
+		  risky     only entries that let a non-privileged principal take over the object [!]
+		[!] marks full control, GenericWrite, WriteDacl, WriteOwner, AllExtendedRights, reset
+		password, DCSync rights, writing member/servicePrincipalName/msDS-KeyCredentialLink/
+		msDS-AllowedToActOnBehalfOfOtherIdentity and similar, adding oneself to a group, held by a
+		principal outside the privileged groups; and a non-privileged owner.
+		LDAP queries: the security descriptor (one base search with the SD flags control) and one
+		cached search per SID that is not well-known.
+		"""
+		if self.connection is None:
+			print('Not connected, run login first')
+			return False
+		if path in acl.SCOPE_FILTERS and show == 'all':
+			path, show = '.', path
+		if show not in acl.SCOPE_FILTERS:
+			print("Unknown filter '%s', expected one of: %s" % (show, ', '.join(acl.SCOPE_FILTERS)))
+			return False
+		try:
+			target = navigation.resolve(path, self._current_dn, self._naming_contexts())
+		except ValueError as e:
+			print(e)
+			return False
+		try:
+			result = await acl.collect(self.connection, target, self.cache)
+		except Exception as e:
+			print(records.search_error(e, target))
+			return False
+		if result is None:
+			print('No security descriptor returned for %s (no read access?)' % target)
+			return False
+		ui.emit(acl.format_acl(target, *result, show=show))
+		return True
+
+	def _acl_completions(self):
+		return self._cd_completions()
+
+	async def do_getsd(self, dn='.', opts=' '):
+		"""msldap's getsd (raw SDDL; opts p or g: per-ACE tables), with paths as for cd.
+		'acl' shows the same data decoded."""
+		if self.connection is not None:
+			try:
+				dn = navigation.resolve(dn, self._current_dn, self._naming_contexts())
+			except ValueError as e:
+				print(e)
+				return False
+		return await MSLDAPClientConsole.do_getsd(self, dn, opts)
+
+	def _getsd_completions(self):
 		return self._cd_completions()
 
 	async def _print_objects(self, query, attrs, base, scope, count=True):

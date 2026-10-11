@@ -199,6 +199,12 @@ check "cat with a relative path" '^DN: CN=Builtin,DC=north,DC=sevenkingdoms,DC=l
 check "cat of a missing object is explained" '^No such object: CN=nosuchobject,CN=Users,DC=north' "$RESULTS/cat.txt"
 check "ls with a path" '^CN=Administrators$' "$RESULTS/cat.txt"
 check "ls with a pattern" '^CN=Domain Controllers$' "$RESULTS/cat.txt"
+"$OPS" --no-log --no-cache "$URL" login "acl" "acl CN=Users explicit" "getsd ." "acl CN=Domain Admins,CN=Users risky" >"$RESULTS/acl.txt" 2>&1 || true
+check "acl of the domain object" '^ACL of DC=north,DC=sevenkingdoms,DC=local$' "$RESULTS/acl.txt"
+check "acl decodes the DCSync rights" 'ExtendedRight +Replicating Directory Changes All ' "$RESULTS/acl.txt"
+check "acl resolves principals" '^  allow .*\\Domain Admins ' "$RESULTS/acl.txt"
+check "getsd accepts paths" '^O:[A-Z0-9-]+G:' "$RESULTS/acl.txt"
+check_cmd "no tracebacks in acl/getsd" bash -c "! grep -q 'Traceback' '$RESULTS/acl.txt'"
 
 echo
 echo "== bofhound import"

@@ -37,6 +37,9 @@ RULES = [
 	(r'^send\? .*$', 'bold'),
 	(r'^(Privileged groups in|Privileged accounts:|adminCount=1 users|Name or description contains|Template |Errors:).*$', 'bold'),
 	(r'^  (Permissions|\[!\] Vulnerabilities.*)$', 'bold'),
+	(r'^ACL of .*$', 'bold'),
+	(r'^  Access +Principal +Rights +Object +Applies to$', 'bold'),
+	(r'^  deny\b', 'yellow'),
 	(r'^Note: .*$', 'yellow'),
 	(r'^WARNING: .*$', 'bold yellow'),
 	# records of msldap's query command
