@@ -1,4 +1,6 @@
 import asyncio
+import contextlib
+import os
 import re
 import signal
 import sys
@@ -11,6 +13,22 @@ from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.patch_stdout import patch_stdout
 
 from msldap_ops import hooks, navigation, opsec, presets, privileged, templates, ui
+
+
+def split_redirect(args):
+	"""(args, file, append) for '<command> [args] > file' and '>> file' (also '>file')."""
+	for i, arg in enumerate(args):
+		if not arg.startswith('>'):
+			continue
+		append = arg.startswith('>>')
+		target = arg[2:] if append else arg[1:]
+		rest = args[i + 1:]
+		if target and not rest:
+			return args[:i], target, append
+		if not target and len(rest) == 1:
+			return args[:i], rest[0], append
+		raise ValueError('Usage: <command> [args] > file  (or >> file to append)')
+	return args, None, False
 
 
 def sd_flags_control():
@@ -41,7 +59,12 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		self.session = PromptSession(enable_history_search=True, key_bindings=self._get_bindings())
 		try:
 			with patch_stdout(raw=True):
-				await self._run_prompt_forever()
+				proxy = sys.stdout
+				sys.stdout = ui.StyledStream(proxy)
+				try:
+					await self._run_prompt_forever()
+				finally:
+					sys.stdout = proxy
 		finally:
 			if self._ignore_sigint and sys.platform != 'win32':
 				asyncio.get_event_loop().remove_signal_handler(signal.SIGINT)
@@ -55,6 +78,31 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		self.keepalive = keepalive
 
 	async def _run_single_command(self, command, args):
+		try:
+			args, path, append = split_redirect(args)
+		except ValueError as e:
+			print(e)
+			return False
+		if path is None:
+			return await self._run_command(command, args)
+		path = os.path.expanduser(path)
+		try:
+			f = open(path, 'a' if append else 'w', encoding='utf-8')
+		except OSError as e:
+			print('Cannot write %s: %s' % (path, e))
+			return False
+		screen = sys.stdout
+		# opsec queries and questions stay on the screen, the file gets plain text
+		ui.set_terminal(screen)
+		try:
+			with f, contextlib.redirect_stdout(f):
+				res = await self._run_command(command, args)
+		finally:
+			ui.set_terminal(None)
+		print('Output %s %s' % ('appended to' if append else 'written to', path))
+		return res
+
+	async def _run_command(self, command, args):
 		# the task running the command; queries from other tasks (keepalive) are background
 		hooks.set_foreground(asyncio.current_task())
 		self.gate.start_command(command)

@@ -24,14 +24,39 @@ def test_plain_output_is_unchanged(plain, capsys):
 	assert capsys.readouterr().out == '  Enrollee Supplies Subject       : True [!]\n[opsec] x: 1 LDAP query sent\n'
 
 
-def test_colors_keep_the_text(color, capsys):
-	line = '    eddard.stark  user  direct  kerberoastable, delegable'
-	ui.emit([line])
-	out = capsys.readouterr().out
-	assert '\x1b[' in out
-	# without the escape sequences the line is the same
+def strip_ansi(text):
 	import re
-	assert re.sub(r'\x1b\[[0-9;]*m', '', out) == line + '\n'
+	return re.sub(r'\x1b\[[0-9;]*m', '', text)
+
+
+def test_colors_keep_the_text(color):
+	import io
+	target = io.StringIO()
+	stream = ui.StyledStream(target)
+	line = '    eddard.stark  user  direct  kerberoastable, delegable'
+	stream.write(line[:10])
+	assert target.getvalue() == ''  # line buffered
+	stream.write(line[10:] + '\n')
+	assert '\x1b[' in target.getvalue()
+	# without the escape sequences the line is the same
+	assert strip_ansi(target.getvalue()) == line + '\n'
+
+
+def test_plain_stream_passes_through(plain):
+	import io
+	target = io.StringIO()
+	ui.StyledStream(target).write('---\nDN: CN=x\n')
+	assert target.getvalue() == '---\nDN: CN=x\n'
+
+
+def test_records_are_separated_on_the_terminal(color):
+	assert strip_ansi(ui.render('---')).startswith('\u2500\u2500\u2500')
+	header = strip_ansi(ui.render('Template ESC1')).split('\n')
+	assert header[0].startswith('\u2500') and header[1] == 'Template ESC1'
+	assert ('DN: CN=jon.snow,DC=x', 'bold cyan') in spans('DN: CN=jon.snow,DC=x')
+	assert ('  sAMAccountName', 'blue') in spans('  sAMAccountName: jon.snow')
+	# the templates details use ' : ', those keys stay plain
+	assert spans('  Template Name                   : ESC1') == []
 
 
 def test_styles():

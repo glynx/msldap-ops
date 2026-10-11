@@ -63,7 +63,9 @@
       [rich](https://github.com/Textualize/rich) on top of the plain text layout
       (prompt_toolkit's patch_stdout runs with raw=True so that colors reach the terminal)
 - [ ] Try the colors interactively; decide whether `map`/`tree` should become rich trees
-- [ ] Colors for the output of the msldap built-in commands (they print directly)
+- [x] Colors for the output of the msldap built-in commands (all output goes through a styling stream)
+- [x] Separate records (query output) on the terminal
+- [x] Redirect a command's output to a file (`> file`, `>> file`)
 - [ ] Better command descriptions (parameters, allowed values) for the msldap-ops commands
 
 ## Release

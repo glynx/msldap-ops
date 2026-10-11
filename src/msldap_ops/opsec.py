@@ -45,16 +45,21 @@ def format_query(query, prefix='[ldap]'):
 
 
 async def default_ask(text):
+	import sys
+
 	from prompt_toolkit import PromptSession
 	from prompt_toolkit.formatted_text import FormattedText
+	from prompt_toolkit.output import create_output
 
 	from msldap_ops import ui
-	return await PromptSession().prompt_async(FormattedText([('bold', text)]) if ui.enabled() else text)
+	# while the command output goes to a file, the question must still reach the terminal
+	session = PromptSession(output=create_output(stdout=sys.__stdout__)) if ui.terminal() is not sys.stdout else PromptSession()
+	return await session.prompt_async(FormattedText([('bold', text)]) if ui.enabled() else text)
 
 
 def default_out(line):
 	from msldap_ops import ui
-	ui.out(line)
+	print(line, file=ui.terminal())
 
 
 class OpsecGate:

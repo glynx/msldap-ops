@@ -1,10 +1,12 @@
 """Terminal output: colors on top of the plain text layout.
 
-The msldap-ops commands keep their plain text layout (copy/paste and grep work, and so do the GOAD
-checks); rich only adds colors, and only when stdout is a terminal. NO_COLOR or --no-color switch
-them off.
+All output of the shell, including the msldap built-in commands, goes through StyledStream, which
+colors it line by line before it reaches the terminal. The text itself keeps its plain layout
+(copy/paste and grep work, and so do the GOAD checks); only on a terminal records get a separator
+line and colors. NO_COLOR or --no-color switch this off.
 """
 
+import io
 import os
 import re
 import shutil
@@ -37,7 +39,15 @@ RULES = [
 	(r'^  (Permissions|\[!\] Vulnerabilities.*)$', 'bold'),
 	(r'^Note: .*$', 'yellow'),
 	(r'^WARNING: .*$', 'bold yellow'),
+	# records of msldap's query command
+	(r'^DN: .*$', 'bold cyan'),
+	(r'^Attributes:$', 'bright_black'),
+	(r'^  [A-Za-z][\w;-]*(?=:( |$))', 'blue'),
+	(r'^    - ', 'bright_black'),
 ]
+# lines that end a record (msldap's query prints '---') and lines that start one
+RECORD_END = re.compile(r'^---$')
+RECORD_START = re.compile(r'^Template \S')
 _COMPILED = [(re.compile(rx), style) for rx, style in RULES]
 
 
@@ -55,9 +65,12 @@ def enabled():
 	return sys.__stdout__ is not None and sys.__stdout__.isatty()
 
 
-def _console():
-	return Console(file=sys.stdout, force_terminal=True, width=shutil.get_terminal_size().columns,
-		highlight=False, soft_wrap=True, emoji=False, markup=False)
+def _width():
+	return shutil.get_terminal_size().columns
+
+
+def separator():
+	return Text('\u2500' * min(_width(), 100), style='bright_black')
 
 
 def styled(line):
@@ -67,21 +80,78 @@ def styled(line):
 	return text
 
 
+def render(line):
+	"""ANSI rendering of one output line (without the newline)."""
+	if '\x1b' in line:
+		return line  # already colored
+	if RECORD_END.match(line):
+		texts = [separator()]
+	elif RECORD_START.match(line):
+		texts = [separator(), styled(line)]
+	else:
+		texts = [styled(line)]
+	buf = io.StringIO()
+	console = Console(file=buf, force_terminal=True, width=100000, highlight=False, soft_wrap=True,
+		emoji=False, markup=False)
+	for i, text in enumerate(texts):
+		console.print(text, end='' if i == len(texts) - 1 else '\n')
+	return buf.getvalue()
+
+
+class StyledStream(io.TextIOBase):
+	"""Line buffered stdout wrapper that colors every complete line."""
+
+	def __init__(self, target):
+		self.target = target
+		self._buf = ''
+
+	def write(self, data):
+		if not enabled():
+			return self.target.write(data)
+		self._buf += data
+		while '\n' in self._buf:
+			line, self._buf = self._buf.split('\n', 1)
+			self.target.write(render(line) + '\n')
+		return len(data)
+
+	def flush(self):
+		if self._buf:
+			# a partial line (e.g. a prompt without newline) goes out as it is
+			self.target.write(self._buf)
+			self._buf = ''
+		self.target.flush()
+
+	def isatty(self):
+		return self.target.isatty()
+
+	def __getattr__(self, name):
+		return getattr(self.target, name)
+
+
 def emit(lines):
-	"""Prints msldap-ops output lines, colored when possible."""
+	"""Prints output lines; the StyledStream on stdout colors them."""
 	if isinstance(lines, str):
 		lines = [lines]
-	if not enabled():
-		for line in lines:
-			print(line)
-		return
-	console = _console()
 	for line in lines:
-		console.print(styled(line))
+		print(line)
 
 
 def out(line):
-	emit([line])
+	print(line)
+
+
+_terminal = None
+
+
+def terminal():
+	"""The stream for messages that belong on the screen even while a command's output is
+	redirected to a file (opsec queries and questions)."""
+	return _terminal or sys.stdout
+
+
+def set_terminal(stream):
+	global _terminal
+	_terminal = stream
 
 
 def prompt(dn):

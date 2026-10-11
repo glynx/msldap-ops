@@ -197,10 +197,22 @@ queries are not shown or confirmed and not written to the bofhound log, only to 
 
 ## Output
 
-The prompt (`msldap-ops <DN> >`) is colored so that it stands out from the command output. The
-msldap-ops commands keep their plain text layout and add colors on top: findings and `[!]` marks in
-red, `delegable` in yellow, the queries shown by `opsec` in gray. Without a terminal (pipes, files) the
-output is plain text; `--no-color` or the `NO_COLOR` environment variable switch colors off.
+The prompt (`msldap-ops <DN> >`) is colored so that it stands out from the command output. All output,
+including the msldap built-in commands, keeps its plain text layout and gets colors on top: records
+of `query` are separated by a line, their DN and attribute names are colored, findings and `[!]`
+marks are red, `delegable` yellow, the queries shown by `opsec` gray. Without a terminal (pipes,
+files) the output is plain text; `--no-color` or the `NO_COLOR` environment variable switch colors
+off.
+
+Any command's output can go to a file instead of the screen:
+
+```text
+query (adminCount=1) sAMAccountName > admins.txt
+find_admins >> report.txt
+```
+
+The file gets plain text. Opsec queries and questions stay on the screen, so `opsec confirm` works
+while redirecting.
 
 ## Development
 

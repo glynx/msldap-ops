@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import logging
 import shlex
+import sys
 
 from asyauth import logger as authlogger
 from asysocks import logger as sockslogger
@@ -17,6 +18,8 @@ from msldap_ops.shell import MSLDAPOpsConsole
 async def amain(args):
 	if args.no_color:
 		ui.set_enabled(False)
+	if ui.enabled():
+		sys.stdout = ui.StyledStream(sys.stdout)
 	hooks.install()
 	querylog = None
 	if not args.no_log:
