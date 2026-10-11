@@ -58,3 +58,22 @@ def test_plain_prompt_keeps_the_msldap_format(plain):
 	console = MSLDAPOpsConsole(None)
 	console.prompt = '[DC=x]> '
 	assert console.prompt == '[DC=x]> '
+
+
+def spans(line):
+	text = ui.styled(line)
+	return [(line[s.start:s.end], s.style) for s in text.spans]
+
+
+def test_esc_only_highlighted_as_finding():
+	assert spans('Template ESC1') == [('Template ESC1', 'bold')]
+	assert spans('  Template Name                   : ESC1') == []
+	assert spans('  Display Name                    : ESC1') == []
+	assert ('ESC1', 'bold red') in spans('    ESC1                          : Users can enroll, enrollee supplies subject')
+	# templates table: the name column stays plain, the vulnerabilities column is highlighted
+	row = '  ESC1         ESSOS-CA  yes          yes               no        ESC1, ESC9'
+	assert spans(row) == [('ESC1, ESC9', 'bold red')]
+
+
+def test_password_never_expires_is_not_colored():
+	assert spans('    eddard.stark  user  direct  password-never-expires, delegable') == [('delegable', 'yellow')]

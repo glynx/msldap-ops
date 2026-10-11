@@ -20,9 +20,12 @@ _enabled = None
 RULES = [
 	(r'\[!\]', 'bold red'),
 	(r'\bTrue \[!\]', 'bold red'),
-	(r'\bESC\d+\b', 'bold red'),
+	# ESC findings, not template names (GOAD's templates are called ESC1, ...): the finding lines
+	# below "Vulnerabilities" and the last column of the templates table
+	(r'(?<=^    )ESC\d+(?= +: )', 'bold red'),
+	(r'(?<=  )ESC\d+(, ESC\d+)*$', 'bold red'),
 	(r'\b(kerberoastable|asrep-roastable|unconstrained-delegation|password-not-required)\b', 'red'),
-	(r'\b(password-never-expires|delegable)\b', 'yellow'),
+	(r'\bdelegable\b', 'yellow'),
 	(r'\b(disabled|not found|not published[^)]*|\(not published\))', 'dim'),
 	(r'^\[(ldap|dryrun) #\d+\]', 'bold yellow'),
 	(r'^\[cache\]', 'cyan'),
