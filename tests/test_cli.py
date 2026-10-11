@@ -16,3 +16,23 @@ def test_help_exits_cleanly(monkeypatch, capsys):
 		cli.main()
 	assert exc.value.code == 0
 	assert 'msldap-ops' in capsys.readouterr().out
+
+
+async def test_log_command(tmp_path, capsys):
+	from msldap_ops.querylog import QueryLog
+
+	querylog = QueryLog(str(tmp_path))
+	console = MSLDAPOpsConsole(None, querylog=querylog)
+	assert await console.do_log('off') is True
+	assert querylog.enabled is False
+	assert await console.do_log('maybe') is False
+	assert await console.do_log('on') is True
+	out = capsys.readouterr().out
+	assert 'Query logging: on' in out
+	assert str(tmp_path) in out
+
+
+async def test_log_command_without_logging(capsys):
+	console = MSLDAPOpsConsole(None)
+	assert await console.do_log() is True
+	assert '--no-log' in capsys.readouterr().out
