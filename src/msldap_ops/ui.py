@@ -27,8 +27,10 @@ RULES = [
 	(r'\b(kerberoastable|asrep-roastable|unconstrained-delegation|password-not-required)\b', 'red'),
 	(r'\bdelegable\b', 'yellow'),
 	(r'\b(disabled|not found|not published[^)]*|\(not published\))', 'dim'),
-	(r'^\[(ldap|dryrun) #\d+\]', 'bold yellow'),
-	(r'^\[cache\]', 'cyan'),
+	# the query display of opsec show/confirm/dryrun: header, filter and attribute lines
+	(r'^\[(ldap|dryrun) #\d+\] .*$', 'bright_black'),
+	(r'^ +(filter|attributes): .*$', 'bright_black'),
+	(r'^\[cache\] .*$', 'bright_black'),
 	(r'^\[opsec\].*$', 'dim'),
 	(r'^send\? .*$', 'bold'),
 	(r'^(Privileged groups in|Privileged accounts:|adminCount=1 users|Name or description contains|Template |Errors:).*$', 'bold'),

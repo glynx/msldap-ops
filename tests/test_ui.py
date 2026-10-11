@@ -35,10 +35,11 @@ def test_colors_keep_the_text(color, capsys):
 
 
 def test_styles():
-	spans = {str(ui.styled('  Enrollee Supplies Subject       : True [!]')[s.start:s.end]): s.style for s in ui.styled('  Enrollee Supplies Subject       : True [!]').spans}
-	assert spans['True [!]'] == 'bold red'
-	cache = ui.styled('[cache] (a=b)  DC=x  scope=sub')
-	assert cache.spans[0].style == 'cyan' and cache.spans[0].end == len('[cache]')
+	assert ('True [!]', 'bold red') in spans('  Enrollee Supplies Subject       : True [!]')
+	for line in ['[cache] (a=b)  DC=x  scope=sub', '[ldap #1] DC=x  scope=sub', '          filter: (a=b)',
+			'          attributes: *,nTSecurityDescriptor  controls: sd-flags', '[dryrun #2] DC=x  scope=one']:
+		assert spans(line) == [(line, 'bright_black')]
+	assert spans('send? [y]es / [n]o, skip') == [('send? [y]es / [n]o, skip', 'bold')]
 
 
 def test_no_color_environment(monkeypatch):
