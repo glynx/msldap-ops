@@ -57,7 +57,7 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		confirm  every query is printed and needs confirmation:
 		         y = send, n = skip (the command gets an empty result),
 		         a = send all further queries of this command, q = abort the command;
-		         cd, ls and cat send a single query, it is only shown
+		         the queries of cd, ls and cat are only shown
 		dryrun   queries are printed but not sent; commands that build queries on the
 		         results of earlier ones (e.g. find_admins) only show their first stage
 

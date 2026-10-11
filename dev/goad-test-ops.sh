@@ -128,6 +128,9 @@ echo "== opsec"
 check "show prints the queries before they are sent" '^\[ldap #1\] DC=' "$RESULTS/opsec-show.txt"
 check "show reports the number of queries per command" '^\[opsec\] find_admins: [0-9]+ LDAP quer(y|ies) issued$' "$RESULTS/opsec-show.txt"
 echo "   INFO  $(grep -E '^\[opsec\] (login|find_admins):' "$RESULTS/opsec-show.txt" | tr '\n' ';')"
+"$OPS" --no-log --opsec show "$URL" login "cd CN=Computers" >"$RESULTS/opsec-cd.txt" 2>&1 || true
+check "cd shows its query" '^\[ldap #1\] CN=Computers,DC=' "$RESULTS/opsec-cd.txt"
+check_cmd "cd sends a single query (msldap get_tree_plot fix)" bash -c "! grep -qE '^\[ldap #2\] CN=[^,]+,CN=Computers,' '$RESULTS/opsec-cd.txt'"
 "$OPS" --no-log "$URL" login "opsec dryrun" "bofhound_collect all" >"$RESULTS/opsec-dryrun.txt" 2>&1 || true
 check "dryrun shows the queries" '^\[dryrun #1\] ' "$RESULTS/opsec-dryrun.txt"
 check "dryrun sends nothing" '^0 objects from [0-9]+ queries, 0 failed$' "$RESULTS/opsec-dryrun.txt"

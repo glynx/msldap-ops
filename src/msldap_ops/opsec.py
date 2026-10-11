@@ -9,7 +9,7 @@ Modes:
 	confirm  every query is printed and needs confirmation:
 	         y = send, n = skip (the command gets an empty result),
 	         a = send this and all further queries of the running command, q = abort the command;
-	         the single query of cd, ls and cat is only shown
+	         the queries of cd, ls and cat are only shown
 	dryrun   queries are printed but not sent; commands that build queries on earlier results
 	         only show their first stage
 """
@@ -18,9 +18,8 @@ from msldap_ops import hooks
 
 MODES = ('off', 'show', 'confirm', 'dryrun')
 
-# navigation commands that send exactly one query: in confirm mode it is only shown; a second
-# query of the same command is confirmed as usual
-SINGLE_QUERY_COMMANDS = {'cd', 'ls', 'cat'}
+# navigation commands: in confirm mode their queries are only shown, not confirmed
+NAVIGATION_COMMANDS = {'cd', 'ls', 'cat'}
 
 CONTROL_NAMES = {
 	'1.2.840.113556.1.4.319': 'paged',
@@ -71,11 +70,11 @@ class OpsecGate:
 		self._aborted = False
 		self.counter = 0
 
-	def _single_query_command(self):
-		return self.command in SINGLE_QUERY_COMMANDS and self.counter <= 1
+	def _navigation(self):
+		return self.command in NAVIGATION_COMMANDS
 
 	def end_command(self):
-		if self.counter and self.mode in ('show', 'confirm', 'dryrun') and not self._single_query_command():
+		if self.counter and self.mode in ('show', 'confirm', 'dryrun') and not self._navigation():
 			self.out('[opsec] %s: %d LDAP %s %s' % (
 				self.command, self.counter, 'query' if self.counter == 1 else 'queries',
 				'shown, none sent' if self.mode == 'dryrun' else 'issued'))
@@ -93,7 +92,7 @@ class OpsecGate:
 			self.out(line)
 		if self.mode == 'dryrun':
 			return hooks.SKIP
-		if self.mode == 'show' or self._send_all or self._single_query_command():
+		if self.mode == 'show' or self._send_all or self._navigation():
 			return hooks.SEND
 
 		while True:

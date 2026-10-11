@@ -59,14 +59,11 @@ async def test_confirm_yes_no(gated):
 	assert gate.ask.asked == 3  # 'maybe' is asked again
 
 
-async def test_confirm_lets_the_single_query_of_navigation_commands_through(gated):
-	gate, out = make_gate('confirm', 'n', command='cd')
+async def test_confirm_only_shows_navigation_queries(gated):
+	gate, out = make_gate('confirm', command='cd')  # no answers: asking would fail
 	assert len(await search()) == 1
-	assert gate.ask.asked == 0
+	assert len(await search()) == 1
 	assert out[0].startswith('[ldap #1] ')
-	# an unexpected second query is confirmed as usual
-	assert await search() == []
-	assert gate.ask.asked == 1
 
 
 async def test_dryrun_does_not_send_navigation_queries_either(gated):
@@ -74,7 +71,7 @@ async def test_dryrun_does_not_send_navigation_queries_either(gated):
 	assert await search() == []
 
 
-async def test_no_summary_for_a_single_navigation_query(gated):
+async def test_no_summary_for_navigation_commands(gated):
 	gate, out = make_gate('show', command='cat')
 	await search()
 	gate.end_command()

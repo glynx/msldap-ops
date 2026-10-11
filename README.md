@@ -114,7 +114,7 @@ what happens before an LDAP search is sent:
 - `show`: the query (base, scope, filter, attributes, controls) is printed before it is sent
 - `confirm`: the query is printed and needs confirmation: `y` send, `n` skip (the command gets an
   empty result), `a` send all further queries of the running command, `q` abort the command.
-  The single query of `cd`, `ls` and `cat` is only shown; a second one would be confirmed.
+  The queries of the navigation commands `cd`, `ls` and `cat` are only shown.
 - `dryrun`: queries are printed but not sent. Commands that build queries on the results of earlier
   ones (e.g. `find_admins`) only show their first stage; `help <command>` lists the queries of the
   msldap-ops commands.
