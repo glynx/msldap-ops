@@ -529,10 +529,14 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		n = 0
 		async for entry, err in self.connection.pagedsearch(query, attrs, controls=controls, tree=base, search_scope=scope):
 			if err is not None:
-				print('Search failed: %s' % err)
+				print(records.search_error(err, base))
+				if scope == BASE and self._current_dn and navigation.is_under(base, self._current_dn) and base.lower() != (self._current_dn or '').lower():
+					print('  (relative names are resolved below the current DN, use .. or an absolute DN)')
 				return False
 			n += 1
 			ui.emit(records.record_lines(entry['objectName'], entry['attributes']))
 		if count:
 			ui.out(records.count_line(n))
+		else:
+			ui.out('')
 		return True

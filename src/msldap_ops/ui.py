@@ -81,16 +81,56 @@ def styled(line):
 	return text
 
 
-def render(line):
-	"""ANSI rendering of one output line (without the newline)."""
+ATTRIBUTE_LINE = re.compile(r'^( *[A-Za-z][\w;-]*: +)\S')
+MIN_WRAP_WIDTH = 20
+
+
+def wrap_spans(line, width):
+	"""Where to split a line longer than the terminal: [(indent, start, end)]. Continuation lines
+	are indented to the value column of an attribute line ('  description:   ...') or to the
+	line's own indentation; breaks at spaces, hard breaks only within long words (hex, base64)."""
+	if len(line) <= width:
+		return [(0, 0, len(line))]
+	m = ATTRIBUTE_LINE.match(line)
+	indent = len(m.group(1)) if m else len(line) - len(line.lstrip(' '))
+	if width - indent < MIN_WRAP_WIDTH:
+		indent = 0
+	spans, pos, pad = [], 0, 0
+	while len(line) - pos + pad > width:
+		room = width - pad
+		cut = line.rfind(' ', pos + (indent if pad == 0 else 0) + 1, pos + room + 1)
+		if cut == -1:
+			spans.append((pad, pos, pos + room))
+			pos += room
+		else:
+			spans.append((pad, pos, cut))
+			pos = cut + 1
+			while pos < len(line) and line[pos] == ' ':
+				pos += 1
+		pad = indent
+	spans.append((pad, pos, len(line)))
+	return spans
+
+
+def wrap(line, width):
+	return [' ' * pad + line[a:b].rstrip() for pad, a, b in wrap_spans(line, width)]
+
+
+def render(line, width=None):
+	"""ANSI rendering of one output line (without the newline), wrapped to the terminal width."""
 	if '\x1b' in line:
 		return line  # already colored
 	if RECORD_END.match(line):
 		texts = [separator()]
-	elif RECORD_START.match(line):
-		texts = [separator(), styled(line)]
 	else:
-		texts = [styled(line)]
+		full = styled(line)
+		texts = []
+		for pad, a, b in wrap_spans(line, width or _width()):
+			text = Text(' ' * pad)
+			text.append_text(full[a:b])
+			texts.append(text)
+		if RECORD_START.match(line):
+			texts.insert(0, separator())
 	buf = io.StringIO()
 	console = Console(file=buf, force_terminal=True, width=100000, highlight=False, soft_wrap=True,
 		emoji=False, markup=False)
@@ -159,12 +199,29 @@ def set_terminal(stream):
 	_terminal = stream
 
 
+def short_dn(dn, width):
+	"""DN for the prompt: if too long, RDNs between the first one and the domain become '...',
+	so the input does not wrap."""
+	if len(dn) <= width:
+		return dn
+	from msldap_ops.navigation import join_dn, split_dn
+	rdns = split_dn(dn)
+	tail = [r for r in rdns[1:] if r.upper().startswith('DC=')] or rdns[-1:]
+	middle = rdns[1:len(rdns) - len(tail)]
+	while middle:
+		middle = middle[1:]
+		short = join_dn(rdns[:1] + ['...'] + middle + tail)
+		if len(short) <= width:
+			return short
+	return join_dn(rdns[:1] + ['...'] + tail) if len(rdns) > 1 + len(tail) else dn
+
+
 def prompt(dn):
 	"""Prompt that stands out from the command output."""
 	if not enabled():
 		return '[%s]> ' % dn if dn else '> '
 	parts = [('ansibrightblack', 'msldap-ops')]
 	if dn:
-		parts += [('', ' '), ('ansicyan bold', dn)]
+		parts += [('', ' '), ('ansicyan bold', short_dn(dn, _width() - len('msldap-ops  > ') - 20))]
 	parts += [('ansigreen bold', ' > ')]
 	return FormattedText(parts)

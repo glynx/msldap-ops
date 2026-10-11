@@ -103,3 +103,29 @@ def test_esc_only_highlighted_as_finding():
 
 def test_password_never_expires_is_not_colored():
 	assert spans('    eddard.stark  user  direct  password-never-expires, delegable') == [('delegable', 'yellow')]
+
+
+def test_long_values_wrap_at_the_value_column(color):
+	line = '  description:            Members of this group can remotely query authorization attributes'
+	assert ui.wrap(line, 60) == [
+		'  description:            Members of this group can remotely',
+		'                          query authorization attributes',
+	]
+	# no spaces (hex): hard breaks, still below the value column
+	assert ui.wrap('  dSASignature: ' + 'ab' * 30, 40) == [
+		'  dSASignature: ' + 'ab' * 12,
+		'                ' + 'ab' * 12,
+		'                ' + 'ab' * 6,
+	]
+	assert strip_ansi(ui.render(line, 60)).split('\n') == ui.wrap(line, 60)
+
+
+def test_short_lines_are_not_wrapped(color):
+	assert ui.wrap('  cn: Users', 80) == ['  cn: Users']
+
+
+def test_prompt_dn_is_shortened_to_fit():
+	dn = 'CN=Access Control Assistance Operators,CN=Builtin,DC=essos,DC=local'
+	assert ui.short_dn(dn, 100) == dn
+	assert ui.short_dn('CN=a,OU=b,OU=c,OU=d,DC=essos,DC=local', 33) == 'CN=a,...,OU=d,DC=essos,DC=local'
+	assert ui.short_dn(dn, 40) == 'CN=Access Control Assistance Operators,...,DC=essos,DC=local'

@@ -71,3 +71,14 @@ async def test_query_and_cat(capsys):
 	assert 'objects)' not in capsys.readouterr().out
 
 	assert await console.do_query('(cn=*)', '*', '-', 'bogus') is False
+
+
+def test_search_errors_are_readable():
+	from msldap.commons.exceptions import LDAPSearchException
+	err = LDAPSearchException('noSuchObject', b"0000208D: NameErr: DSID-03100245, problem 2001 (NO_OBJECT), data 0, best match of:\n\t'CN=Builtin,DC=essos,DC=local'\n\x00")
+	assert records.search_error(err, 'CN=Administrators,CN=Users,CN=Builtin,DC=essos,DC=local') == (
+		'No such object: CN=Administrators,CN=Users,CN=Builtin,DC=essos,DC=local\n'
+		'  closest existing object: CN=Builtin,DC=essos,DC=local')
+	err = LDAPSearchException('insufficientAccessRights', b'00002098: SecErr: DSID-03150F94\n\x00')
+	assert records.search_error(err, 'DC=x') == 'Search failed (insufficientAccessRights): 00002098: SecErr: DSID-03150F94'
+	assert records.search_error(RuntimeError('boom'), 'DC=x') == 'Search failed: boom'

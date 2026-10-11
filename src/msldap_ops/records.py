@@ -4,6 +4,8 @@ Every object starts with a '---' line (a separator on the terminal) and its DN; 
 are aligned, values of multi-valued attributes are listed below each other.
 """
 
+import re
+
 from winacl.dtyp.security_descriptor import SECURITY_DESCRIPTOR
 
 MAX_NAME_WIDTH = 32
@@ -42,6 +44,24 @@ def record_lines(dn, attributes):
 				else:
 					lines.append('  %s %s' % (pad[:-1], part))
 	return lines
+
+
+def search_error(err, base):
+	"""Readable message for a failed search: result name, the DN and the closest existing object."""
+	name = getattr(err, 'resultname', None)
+	if name is None:
+		return 'Search failed: %s' % err
+	diag = getattr(err, 'diagnostic_message', b'')
+	if isinstance(diag, bytes):
+		diag = diag.decode('utf-8', 'replace')
+	diag = diag.replace('\x00', '').strip()
+	if name == 'noSuchObject':
+		match = re.search(r"best match of:\s*'([^']*)'", diag)
+		text = 'No such object: %s' % base
+		if match and match.group(1):
+			text += '\n  closest existing object: %s' % match.group(1)
+		return text
+	return 'Search failed (%s): %s' % (name, ' '.join(diag.split()))
 
 
 def count_line(n):

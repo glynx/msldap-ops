@@ -203,10 +203,10 @@ The prompt (`msldap-ops <DN> >`) is colored so that it stands out from the comma
 including the msldap built-in commands, keeps its plain text layout and gets colors on top. `query`
 and `cat` show every object with a separator line, its DN and aligned attribute names, values of
 multi-valued attributes below each other (`query` ends with the number of objects); DN and attribute
-names are colored, findings and `[!]`
-marks are red, `delegable` yellow, the queries shown by `opsec` gray. Without a terminal (pipes,
-files) the output is plain text; `--no-color` or the `NO_COLOR` environment variable switch colors
-off.
+names are colored, findings and `[!]` marks are red, `delegable` yellow, the queries shown by `opsec`
+gray. On the terminal long lines wrap at the value column, and a long DN in the prompt is shortened
+(`CN=x,...,DC=essos,DC=local`). Without a terminal (pipes, files) the output is plain text without
+wrapping; `--no-color` or the `NO_COLOR` environment variable switch colors off.
 
 Any command's output can go to a file instead of the screen:
 
