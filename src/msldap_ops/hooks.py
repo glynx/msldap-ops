@@ -31,6 +31,8 @@ import logging
 import msldap.connection
 from msldap.connection import MSLDAPClientConnection
 
+from msldap_ops.cache import is_unique, query_key
+
 logger = logging.getLogger(__name__)
 
 SCOPE_NAMES = {0: 'base', 1: 'one', 2: 'sub'}
@@ -195,7 +197,6 @@ def _wrap_search(original, controls_param, passthrough=None):
 		key = None
 		if _cache is not None and not info.background:
 			# the keepalive has to reach the server, it is neither answered from nor stored in the cache
-			from msldap_ops.cache import query_key
 			_cache.bind(self)
 			key, parts = query_key(original.__name__, params)
 			raws = _cache.get(key)
@@ -246,7 +247,10 @@ def _wrap_search(original, controls_param, passthrough=None):
 			complete = True
 		finally:
 			info.finished = datetime.datetime.now(datetime.timezone.utc)
-			# only complete, successful searches; a caller that stopped early saw only a part
+			# only complete, successful searches; a caller that stopped early saw only a part,
+			# unless the search can only have one result anyway
+			if not complete and raws and is_unique(params):
+				complete = True
 			if key is not None and complete and info.error is None and None not in raws:
 				_cache.put(key, parts, raws)
 			_notify('query_end', info)

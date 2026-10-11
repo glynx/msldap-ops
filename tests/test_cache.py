@@ -99,6 +99,27 @@ async def test_incomplete_and_failed_searches_are_not_cached(cached):
 	assert cached.queries == {}
 
 
+async def test_unique_searches_stopped_after_the_first_result_are_cached(cached):
+	# e.g. msldap's get_ad_info(): (distinguishedName=<domain>) and return after the first entry
+	conn = CountingConnection([raw_entry('DC=north')])
+	for _ in range(2):
+		gen = conn.pagedsearch('DC=north', '(distinguishedName=DC=north)', [b'*'])
+		entry, err = await gen.__anext__()
+		await gen.aclose()
+	assert conn.server_calls == 1
+
+
+def test_is_unique():
+	from msldap_ops.cache import is_unique
+	assert is_unique({'query': '(distinguishedName=CN=a,DC=x)', 'search_scope': 2})
+	assert is_unique({'query': '(objectSid=S-1-5-21-1-2-3-512)', 'search_scope': 2})
+	assert is_unique({'query': '(sAMAccountName=jon.snow)', 'search_scope': 2})
+	assert is_unique({'query': '(objectClass=*)', 'search_scope': 0})
+	assert not is_unique({'query': '(distinguishedName=*)', 'search_scope': 1})
+	assert not is_unique({'query': '(sAMAccountName=jon*)', 'search_scope': 2})
+	assert not is_unique({'query': '(&(objectClass=user)(sAMAccountName=x))', 'search_scope': 2})
+
+
 async def test_background_queries_bypass_the_cache(cached):
 	conn = CountingConnection([raw_entry()])
 	hooks.set_foreground(None)  # no command running: keepalive

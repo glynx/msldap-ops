@@ -5,8 +5,10 @@ converts them), keyed by base, scope, filter, attributes and controls. A repeate
 TTL is answered from the cache: the raw results go through msldap's normal conversion, so commands
 get exactly what a live search would return.
 
-Not cached: background queries (the keepalive must reach the server), searches the caller stopped
-early (incomplete), failed searches. Any add/modify/delete drops the cached queries.
+Not cached: background queries (the keepalive must reach the server), failed searches and searches
+the caller stopped early - unless the search can only have one result (base scope, or an equality
+filter on distinguishedName, objectSid, objectGUID or sAMAccountName), then the first result is the
+complete answer. Any add/modify/delete drops the cached queries.
 
 Besides the queries the cache keeps an index of every DN seen in any result (live or cached), for
 navigation.
@@ -44,6 +46,14 @@ def raw_from_json(data):
 		'objectName': data['dn'].encode('utf-8'),
 		'attributes': [{'type': t.encode(), 'attributes': [base64.b64decode(v) for v in values]} for t, values in data['a']],
 	}
+
+
+UNIQUE_FILTER = re.compile(r'^\((distinguishedName|objectSid|objectGUID|sAMAccountName)=[^*()]+\)$', re.IGNORECASE)
+
+
+def is_unique(params):
+	"""True if the search can return at most one object."""
+	return params.get('search_scope') == 0 or bool(UNIQUE_FILTER.match(params.get('query') or ''))
 
 
 def _control_key(control):
