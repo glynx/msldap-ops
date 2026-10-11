@@ -96,3 +96,49 @@ def test_search_errors_are_readable():
 	err = LDAPSearchException('insufficientAccessRights', b'00002098: SecErr: DSID-03150F94\n\x00')
 	assert records.search_error(err, 'DC=x') == 'Search failed (insufficientAccessRights): 00002098: SecErr: DSID-03150F94'
 	assert records.search_error(RuntimeError('boom'), 'DC=x') == 'Search failed: boom'
+
+
+class TreeClient:
+	_serverinfo = {'namingContexts': [DOMAIN]}
+
+	def __init__(self):
+		self.calls = []
+
+	async def get_tree_plot(self, dn, level=2):
+		self.calls.append((dn, level))
+		return {dn: {'CN=Domain Admins,%s' % dn: {}, 'CN=Domain Users,%s' % dn: {}, 'CN=krbtgt,%s' % dn: {}}}
+
+
+async def test_ls(capsys):
+	console = MSLDAPOpsConsole(None)
+	console.connection = TreeClient()
+	console._current_dn = DOMAIN
+	console._MSLDAPClientConsole__current_dirs = {'CN=Users': 'CN=Users,' + DOMAIN, 'OU=Laps': 'OU=Laps,' + DOMAIN}
+
+	# the current DN: known from cd, no query
+	assert await console.do_ls() is True
+	assert capsys.readouterr().out == 'CN=Users\nOU=Laps\n'
+	assert await console.do_ls('OU=*') is True
+	assert capsys.readouterr().out == 'OU=Laps\n'
+	assert console.connection.calls == []
+	# msldap: ls <anything> prints full DNs
+	assert await console.do_ls('1') is True
+	assert capsys.readouterr().out == 'CN=Users,%s\nOU=Laps,%s\n' % (DOMAIN, DOMAIN)
+
+	# a path: the one level search of cd
+	assert await console.do_ls('CN=Users') is True
+	assert console.connection.calls[-1] == ('CN=Users,' + DOMAIN, 1)
+	assert capsys.readouterr().out == 'CN=Domain Admins\nCN=Domain Users\nCN=krbtgt\n'
+	assert await console.do_ls('Domain*,CN=Users', 'full') is True
+	assert capsys.readouterr().out == 'CN=Domain Admins,CN=Users,%s\nCN=Domain Users,CN=Users,%s\n' % (DOMAIN, DOMAIN)
+	assert await console.do_ls('CN=x*,CN=Users') is True
+	assert capsys.readouterr().out == 'No match for CN=x*\n'
+
+
+def test_rdn_matches():
+	from msldap_ops.navigation import rdn_matches
+	assert rdn_matches('CN=Domain Admins', '*')
+	assert rdn_matches('CN=Domain Admins', 'domain*')
+	assert rdn_matches('CN=Domain Admins', 'CN=Dom*')
+	assert not rdn_matches('OU=Domain Controllers', 'CN=Dom*')
+	assert rdn_matches('CN=x[1]', 'CN=x[1]*')

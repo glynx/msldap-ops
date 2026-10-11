@@ -3,6 +3,7 @@
 The known DNs come from the query cache's DN index, i.e. every object any command has seen so far.
 """
 
+import fnmatch
 import re
 
 from prompt_toolkit.completion import Completer, Completion
@@ -112,10 +113,9 @@ def cat_arguments(args):
 	return path, attributes
 
 
-def split_glob(path):
-	"""(parent path, filter) if the last element of path is a pattern ('*', 'CN=Dom*', '../OU=*'),
-	else None. Only the first RDN may contain '*': cat * lists the children, cat CN=Dom* the
-	matching ones."""
+def split_pattern(path):
+	"""(parent path, pattern RDN) if the last element of path is a pattern ('*', 'CN=Dom*',
+	'../OU=*'), else None. Only the first RDN may contain '*'."""
 	prefix = ''
 	while path.startswith('../') or path.startswith('..,'):
 		prefix += '../'
@@ -124,14 +124,34 @@ def split_glob(path):
 	if not rdns or '*' not in rdns[0] or any('*' in r for r in rdns[1:]):
 		return None
 	parent = (prefix + join_dn(rdns[1:])) if rdns[1:] else (prefix.rstrip('/') or '.')
-	if rdns[0] == '*':
+	return parent, rdns[0]
+
+
+def split_glob(path):
+	"""(parent path, LDAP filter) for a pattern path (see split_pattern), else None:
+	cat * lists the children, cat CN=Dom* the matching ones."""
+	split = split_pattern(path)
+	if split is None:
+		return None
+	parent, rdn = split
+	if rdn == '*':
 		return parent, '(objectClass=*)'
-	attribute, sep, value = rdns[0].partition('=')
+	attribute, sep, value = rdn.partition('=')
 	if not sep or not attribute.strip():
 		return None
 	# DN escapes (CN=Doe\, J*) are plain characters in the filter
 	value = re.sub(r'\\(.)', r'\1', value.strip())
 	return parent, '(%s=%s)' % (attribute.strip(), escape_glob(value))
+
+
+def rdn_matches(rdn, pattern):
+	"""Case-insensitive match of an RDN against a pattern RDN; '*' alone matches everything,
+	'Dom*' (no attribute) matches the value of any RDN type."""
+	if pattern == '*':
+		return True
+	if '=' not in pattern:
+		rdn = rdn.partition('=')[2]
+	return fnmatch.fnmatchcase(rdn.lower(), pattern.lower().replace('[', '[[]'))
 
 
 def escape_glob(value):

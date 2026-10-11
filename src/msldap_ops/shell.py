@@ -472,6 +472,49 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			return False
 		return await MSLDAPClientConsole.do_cd(self, target)
 
+	async def do_ls(self, path='', full=''):
+		"""Children of the current DN or of a path, like ls in a shell.
+
+		ls [path] [full]
+		  path   nothing or '.': the current DN (known from cd, no query); a DN or path as for cd;
+		         a pattern in the last element: Domain*, CN=Domain*, ../OU=*
+		  full   any value: full DNs instead of the names relative to the listed DN
+		msldap's ls <anything> (full DNs of the current DN) works as well.
+		A path is listed with the same one level search as cd (cached).
+		"""
+		if path and not navigation.looks_like_path(path) and '*' not in path:
+			path, full = '', path  # msldap: ls <fullpath>
+		split = navigation.split_pattern(path) if path else None
+		parent, pattern = split if split else (path or '.', None)
+		if parent == '.':
+			children = self._MSLDAPClientConsole__current_dirs or {}
+		else:
+			if self.connection is None:
+				print('Not connected, run login first')
+				return False
+			try:
+				target = navigation.resolve(parent, self._current_dn, self._naming_contexts())
+				tree = await self.connection.get_tree_plot(target, level=1)
+			except ValueError as e:
+				print(e)
+				return False
+			except Exception as e:
+				print(records.search_error(e, target))
+				return False
+			children = {navigation.join_dn(navigation.split_dn(dn)[:-len(navigation.split_dn(target))]): dn
+				for dn in tree.get(target, {})}
+		shown = 0
+		for name, dn in children.items():
+			if pattern is None or navigation.rdn_matches(name, pattern):
+				print(dn if full else name)
+				shown += 1
+		if pattern is not None and shown == 0:
+			print('No match for %s' % pattern)
+		return True
+
+	def _ls_completions(self):
+		return self._cd_completions()
+
 	def _cd_completions(self):
 		return navigation.DNCompleter(
 			get_current=lambda: self._current_dn,

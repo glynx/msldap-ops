@@ -191,12 +191,14 @@ check "cd into another naming context (Configuration)" '^(\||`)-- CN=Schema$' "$
 check "cd ../.. above the Configuration NC is refused" 'CN=Configuration,DC=sevenkingdoms,DC=local is the top of its naming context' "$RESULTS/navigation.txt"
 check_cmd "no raw referral errors" bash -c "! grep -q 'referral' '$RESULTS/navigation.txt'"
 "$OPS" --no-log --no-cache "$URL" login "cat . name" "cat * name" "cd CN=Users" "cat CN=Domain* cn" \
-  "cat ../CN=Builtin name" "cat CN=nosuchobject" >"$RESULTS/cat.txt" 2>&1 || true
+  "cat ../CN=Builtin name" "cat CN=nosuchobject" "ls ../CN=Builtin" "ls Domain*" >"$RESULTS/cat.txt" 2>&1 || true
 check "cat . shows the current object" '^DN: DC=north,DC=sevenkingdoms,DC=local$' "$RESULTS/cat.txt"
 check "cat * shows every child" '^DN: CN=Users,DC=north,DC=sevenkingdoms,DC=local$' "$RESULTS/cat.txt"
 check "cat with a pattern" '^DN: CN=Domain Admins,CN=Users,DC=north,DC=sevenkingdoms,DC=local$' "$RESULTS/cat.txt"
 check "cat with a relative path" '^DN: CN=Builtin,DC=north,DC=sevenkingdoms,DC=local$' "$RESULTS/cat.txt"
 check "cat of a missing object is explained" '^No such object: CN=nosuchobject,CN=Users,DC=north' "$RESULTS/cat.txt"
+check "ls with a path" '^CN=Administrators$' "$RESULTS/cat.txt"
+check "ls with a pattern" '^CN=Domain Controllers$' "$RESULTS/cat.txt"
 
 echo
 echo "== bofhound import"

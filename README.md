@@ -137,6 +137,8 @@ cd ..                    parent DN (refused above the naming context of the DC, 
 cd ../..                 two levels up
 cd CN=Computers          relative to the current DN, also deeper: OU=Servers,OU=Tier0
 cd <DN>                  absolute, any naming context of the DC (e.g. CN=Configuration,...)
+ls [path|pattern] [full] children of the current DN (no query) or of a path, e.g. ls CN=Users,
+                         ls Domain*, ls ../OU=*; full prints DNs
 cat [path] [attributes]  attributes of the current object (cat, cat .), of every child (cat *),
                          of matching children (cat CN=Domain*, cat ../OU=*) or of a DN/path
 query <filter> [attributes] [base|path] [base|one|sub]
@@ -186,7 +188,8 @@ what happens before an LDAP search is sent:
 - `show`: the query (base, scope, filter, attributes, controls) is printed before it is sent
 - `confirm`: the query is printed and needs confirmation: `y` send, `n` skip (the command gets an
   empty result), `a` send all further queries of the running command, `q` abort the command.
-  The queries of the navigation commands `cd`, `ls` and `cat` are only shown.
+  The queries of the navigation commands `cd`, `ls` and `cat` of a single object are only shown;
+  `cat *` and `cat` with a pattern search a whole container level and are confirmed.
 - `dryrun`: queries are printed but not sent. Commands that build queries on the results of earlier
   ones (e.g. `find_admins`) only show their first stage; `help <command>` lists the queries of the
   msldap-ops commands.
@@ -219,6 +222,22 @@ find_admins >> report.txt
 
 The file gets plain text. Opsec queries and questions stay on the screen, so `opsec confirm` works
 while redirecting.
+
+## Differences to msldap
+
+msldap-ops keeps msldap's commands, but changes some where msldap's behaviour is not what a shell
+user expects:
+
+- `cat` takes the path first: `cat [path] [attributes]`. `cat *` shows every child of the current
+  DN (in msldap: all attributes of the current object, now `cat` or `cat .`). msldap's order
+  `cat cn,description CN=Users` is still recognized.
+- `ls` takes a path or pattern (`ls CN=Users`, `ls Domain*`); msldap's `ls <anything>` (full DNs)
+  works as before.
+- `cd` resolves `..`, `../..` and relative paths properly, also with escaped commas, and stops at
+  the top of the naming context with an explanation instead of a referral error.
+- `query` and `cat` print objects in one layout (see [Output](#output)), `query` takes a base path
+  and a scope.
+- A pasted block of several lines runs one command per line.
 
 ## History
 

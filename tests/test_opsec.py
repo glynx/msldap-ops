@@ -36,9 +36,9 @@ def gated(patched):
 	hooks.set_foreground(hooks.UNMANAGED)
 
 
-async def search(flt='(objectClass=user)'):
+async def search(flt='(objectClass=user)', scope=2):
 	conn = FakeConnection([raw_entry()])
-	return await collect(conn.pagedsearch('DC=north', flt, [b'*', b'nTSecurityDescriptor'], search_scope=2))
+	return await collect(conn.pagedsearch('DC=north', flt, [b'*', b'nTSecurityDescriptor'], search_scope=scope))
 
 
 async def test_show_prints_and_sends(gated):
@@ -73,9 +73,23 @@ async def test_dryrun_does_not_send_navigation_queries_either(gated):
 
 async def test_no_summary_for_navigation_commands(gated):
 	gate, out = make_gate('show', command='cat')
-	await search()
+	await search(scope=0)
 	gate.end_command()
 	assert not any(line.startswith('[opsec]') for line in out)
+
+
+async def test_cat_of_one_object_is_not_confirmed(gated):
+	gate, out = make_gate('confirm', command='cat')  # no answers: asking would fail
+	assert len(await search(scope=0)) == 1
+
+
+async def test_cat_of_a_container_is_confirmed(gated):
+	# cat * / cat CN=Dom*: one level search, can return a whole container
+	gate, out = make_gate('confirm', 'n', command='cat')
+	assert await search(scope=1) == []
+	assert gate.ask.asked == 1
+	gate.end_command()
+	assert out[-1] == '[opsec] cat: no LDAP queries sent, 1 skipped'
 
 
 async def test_confirm_all_sends_the_rest_of_the_command(gated):

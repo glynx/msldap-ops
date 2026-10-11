@@ -20,8 +20,10 @@ from msldap_ops import hooks
 
 MODES = ('off', 'show', 'confirm', 'dryrun')
 
-# navigation commands: in confirm mode their queries are only shown, not confirmed
+# navigation commands: in confirm mode their queries are only shown, not confirmed; for cat only
+# the search of a single object (base scope), cat * can return a whole container
 NAVIGATION_COMMANDS = {'cd', 'ls', 'cat'}
+NAVIGATION_BASE_ONLY = {'cat'}
 
 CONTROL_NAMES = {
 	'1.2.840.113556.1.4.319': 'paged',
@@ -88,9 +90,14 @@ class OpsecGate:
 		self.skipped = 0
 		self.aborted_at = None
 		self.cached_counter = 0
+		self.confirmable = 0  # queries shown that were not exempt as navigation
 
-	def _navigation(self):
-		return self.command in NAVIGATION_COMMANDS
+	def _navigation(self, query=None):
+		if self.command not in NAVIGATION_COMMANDS:
+			return False
+		if self.command in NAVIGATION_BASE_ONLY:
+			return query is not None and query.scope == 'base'
+		return True
 
 	def summary(self):
 		"""What actually happened: sent, skipped, aborted, answered from the cache."""
@@ -110,7 +117,8 @@ class OpsecGate:
 		return ', '.join(parts)
 
 	def end_command(self):
-		if (self.counter or self.cached_counter) and self.mode in ('show', 'confirm', 'dryrun') and not self._navigation():
+		navigation_only = self.command in NAVIGATION_COMMANDS and not self.confirmable
+		if (self.counter or self.cached_counter) and self.mode in ('show', 'confirm', 'dryrun') and not navigation_only:
 			self.out('[opsec] %s: %s' % (self.command, self.summary()))
 		self.command = None
 
@@ -129,12 +137,15 @@ class OpsecGate:
 		if self._aborted:
 			raise hooks.QueryAborted('aborted by operator')
 		self.counter += 1
+		navigation = self._navigation(query)
+		if not navigation:
+			self.confirmable += 1
 		prefix = '[%s #%d]' % ('dryrun' if self.mode == 'dryrun' else 'ldap', self.counter)
 		for line in format_query(query, prefix):
 			self.out(line)
 		if self.mode == 'dryrun':
 			return hooks.SKIP
-		if self.mode == 'show' or self._send_all or self._navigation():
+		if self.mode == 'show' or self._send_all or navigation:
 			self.sent += 1
 			return hooks.SEND
 
