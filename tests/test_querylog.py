@@ -213,6 +213,21 @@ async def test_querylog_writes_bofhound_records(patched, tmp_path):
 	assert query['count'] == 2
 
 
+async def test_querylog_skips_records_bofhound_cannot_identify(patched, tmp_path):
+	querylog = QueryLog(str(tmp_path / 'logs'))
+	hooks.add_listener(querylog)
+	dn_only = {'objectName': b'CN=Users,DC=north', 'attributes': [
+		{'type': b'distinguishedName', 'attributes': [b'CN=Users,DC=north']},
+	]}
+	await collect(FakeConnection([dn_only, raw_entry('CN=a,DC=north')]).search('DC=north', '(x=*)', [b'distinguishedName']))
+
+	lines = open(querylog.path, encoding='utf-8').read().splitlines()
+	assert [r['distinguishedname'] for r in parse(lines)] == ['CN=a,DC=north']
+	assert lines[-1] == 'Retrieved 1 results total'
+	query = json.loads(open(querylog.query_path, encoding='utf-8').read())
+	assert (query['count'], query['logged']) == (2, 1)
+
+
 async def test_querylog_can_be_switched_off(patched, tmp_path):
 	querylog = QueryLog(str(tmp_path / 'logs'))
 	querylog.enabled = False

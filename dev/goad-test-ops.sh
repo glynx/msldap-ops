@@ -96,7 +96,8 @@ check "queries are terminated for bofhound" '^Retrieved [0-9]+ results total$' "
 check "query journal has the filter" '"filter": "\(objectCategory=computer\)"' "${QLOG:-/dev/null}"
 
 BEFORE="$(wc -l <"${LOG:-/dev/null}")"
-ops logoff.txt login "log off" "query (objectClass=domain) $ATTRS"
+# 'log off' before login, the login itself runs queries as well
+ops logoff.txt "log off" login "query (objectClass=domain) $ATTRS"
 AFTER="$(wc -l <"${LOG:-/dev/null}")"
 check_cmd "log off stops logging" test "$BEFORE" -eq "$AFTER"
 

@@ -16,7 +16,8 @@ and binary attributes look the way bofhound expects them:
 - everything else as the string the server sent; values that are not printable text are base64
   encoded as well
 
-The query parameters (base, scope, filter, attributes, result count) are written to a separate JSON
+Results without objectSid and objectGUID are not written, bofhound cannot use them. The query
+parameters (base, scope, filter, attributes, result count, number of logged records) are written to a separate JSON
 lines file next to it, so that the bofhound log stays free of anything the parser could misread.
 """
 
@@ -51,6 +52,9 @@ BASE64_ATTRIBUTES = {
 }
 # skipped like pyldapsearch does; large and not used by bofhound
 IGNORED_ATTRIBUTES = {'usercertificate'}
+# bofhound identifies objects by SID or GUID; records with neither are useless to it, and records
+# with only a DN (e.g. msldap's tree probes during login) make its container resolution crash
+IDENTIFYING_ATTRIBUTES = {'objectsid', 'objectguid'}
 
 
 def _b64(value):
@@ -81,6 +85,15 @@ def format_value(name, value):
 		return _b64(value)
 	# the format is line based, a line break inside a value would start a new attribute
 	return ' '.join(text.splitlines())
+
+
+def is_identifiable(raw):
+	for attribute in raw['attributes']:
+		name = attribute['type']
+		name = name.decode() if isinstance(name, bytes) else str(name)
+		if name.lower() in IDENTIFYING_ATTRIBUTES and attribute['attributes']:
+			return True
+	return False
 
 
 def format_entry(raw):
@@ -129,13 +142,17 @@ class QueryLog:
 		if not self.enabled:
 			return
 		raw = getattr(entry, 'raw', None)
-		if raw is None:
+		if raw is None or not is_identifiable(raw):
 			return
 		# one write per record keeps records intact when queries overlap
 		self._write('records', '\n'.join(format_entry(raw)) + '\n')
+		query.logged = getattr(query, 'logged', 0) + 1
 
 	def query_end(self, query):
 		if not self.enabled:
 			return
-		self._write('records', 'Retrieved %d results total\n' % query.count)
-		self._write('queries', json.dumps(query.to_dict()) + '\n')
+		logged = getattr(query, 'logged', 0)
+		self._write('records', 'Retrieved %d results total\n' % logged)
+		record = query.to_dict()
+		record['logged'] = logged
+		self._write('queries', json.dumps(record) + '\n')
