@@ -16,7 +16,7 @@ and binary attributes look the way bofhound expects them:
 - everything else as the string the server sent; values that are not printable text are base64
   encoded as well
 
-Results without objectSid and objectGUID are not written, bofhound cannot use them. The query
+Results bofhound cannot identify (no SID/GUID, no schema entry, crossRef or DNS node) are not written. The query
 parameters (base, scope, filter, attributes, result count, number of logged records) are written to a separate JSON
 lines file next to it, so that the bofhound log stays free of anything the parser could misread.
 """
@@ -52,9 +52,11 @@ BASE64_ATTRIBUTES = {
 }
 # skipped like pyldapsearch does; large and not used by bofhound
 IGNORED_ATTRIBUTES = {'usercertificate'}
-# bofhound identifies objects by SID or GUID; records with neither are useless to it, and records
-# with only a DN (e.g. msldap's tree probes during login) make its container resolution crash
-IDENTIFYING_ATTRIBUTES = {'objectsid', 'objectguid'}
+# bofhound identifies objects by SID or GUID, except for schema entries, crossRefs and DNS nodes,
+# which it handles before that check. Anything else without SID/GUID ends up as an unknown object;
+# records with only a DN (e.g. msldap's tree probes during login) make its container resolution crash
+IDENTIFYING_ATTRIBUTES = {'objectsid', 'objectguid', 'schemaidguid'}
+IDENTIFYING_CLASSES = {'crossref', 'dnsnode'}
 
 
 def _b64(value):
@@ -91,7 +93,10 @@ def is_identifiable(raw):
 	for attribute in raw['attributes']:
 		name = attribute['type']
 		name = name.decode() if isinstance(name, bytes) else str(name)
-		if name.lower() in IDENTIFYING_ATTRIBUTES and attribute['attributes']:
+		values = attribute['attributes'] or []
+		if name.lower() in IDENTIFYING_ATTRIBUTES and values:
+			return True
+		if name.lower() == 'objectclass' and any(v.decode('utf-8', 'replace').lower() in IDENTIFYING_CLASSES for v in values):
 			return True
 	return False
 

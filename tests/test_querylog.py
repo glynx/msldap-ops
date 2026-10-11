@@ -228,6 +228,19 @@ async def test_querylog_skips_records_bofhound_cannot_identify(patched, tmp_path
 	assert (query['count'], query['logged']) == (2, 1)
 
 
+def test_records_bofhound_handles_without_sid_or_guid_are_kept():
+	from msldap_ops.querylog import is_identifiable
+
+	def raw(**attrs):
+		return {'objectName': b'x', 'attributes': [{'type': k.encode(), 'attributes': v} for k, v in attrs.items()]}
+
+	assert is_identifiable(raw(name=[b'ms-Mcs-AdmPwd'], schemaIDGUID=[uuid.UUID(USER_GUID).bytes_le]))
+	assert is_identifiable(raw(objectClass=[b'top', b'crossRef'], nETBIOSName=[b'NORTH']))
+	assert is_identifiable(raw(objectClass=[b'top', b'dnsNode'], dnsRecord=[b'\x04\x00']))
+	assert not is_identifiable(raw(distinguishedName=[b'CN=Users,DC=north']))
+	assert not is_identifiable(raw(objectClass=[b'top', b'container'], distinguishedName=[b'CN=Users,DC=north']))
+
+
 async def test_querylog_can_be_switched_off(patched, tmp_path):
 	querylog = QueryLog(str(tmp_path / 'logs'))
 	querylog.enabled = False
