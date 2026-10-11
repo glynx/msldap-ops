@@ -50,13 +50,19 @@ class PrivateFileHistory(FileHistory):
 		super().__init__(filename)
 
 	def load_history_strings(self):
-		# the file keeps every execution, the history shows each command once (newest first)
-		return unique_recent(super().load_history_strings())
+		# the file keeps every execution, the history shows each command once (newest first);
+		# pasted blocks of several lines (stored as one entry before) become single commands
+		lines = (line for entry in super().load_history_strings() for line in reversed(entry.splitlines()))
+		return unique_recent(lines)
 
 	def append_string(self, string):
-		# a repeated command moves to the top instead of appearing twice
-		self._loaded_strings = [s for s in self._loaded_strings if _key(s) != _key(string)]
-		super().append_string(string)
+		# a pasted block runs line by line, each line is a command of its own
+		for line in string.splitlines():
+			if not line.strip():
+				continue
+			# a repeated command moves to the top instead of appearing twice
+			self._loaded_strings = [s for s in self._loaded_strings if _key(s) != _key(line)]
+			super().append_string(line)
 
 	def store_string(self, string):
 		if is_sensitive(string):
@@ -87,13 +93,14 @@ def fzf_select(entries, query=''):
 	"""Lets the user pick one entry with fzf; None if cancelled."""
 	try:
 		proc = subprocess.run(
-			['fzf', '--no-multi', '--no-sort', '--height=40%', '--reverse', '--prompt=history> ', '--query', query],
-			input='\n'.join(entries), stdout=subprocess.PIPE, text=True)
+			['fzf', '--read0', '--print0', '--no-multi', '--no-sort', '--height=40%', '--reverse',
+				'--prompt=history> ', '--query', query],
+			input='\0'.join(entries), stdout=subprocess.PIPE, text=True)
 	except OSError:
 		return None
 	if proc.returncode != 0:
 		return None
-	return proc.stdout.rstrip('\n') or None
+	return proc.stdout.rstrip('\0\n') or None
 
 
 def add_fzf_binding(bindings, history):

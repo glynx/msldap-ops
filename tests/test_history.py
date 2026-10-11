@@ -42,14 +42,14 @@ def test_unique_recent():
 def test_fzf_select(monkeypatch, tmp_path):
 	# a fake fzf that prints the second line of its input and records its query
 	fake = tmp_path / 'fzf'
-	fake.write_text('#!/bin/sh\necho "$@" > "%s/args"\nsed -n 2p\n' % tmp_path)
+	fake.write_text('#!/bin/sh\necho "$@" > "%s/args"\ntr "\\000" "\\n" | sed -n 2p | tr "\\n" "\\000"\n' % tmp_path)
 	fake.chmod(0o755)
 	monkeypatch.setenv('PATH', '%s:%s' % (tmp_path, os.environ['PATH']))
 	assert history.fzf_available()
 	assert history.fzf_select(['find_admins', 'templates vulnerable'], 'temp') == 'templates vulnerable'
 	args = (tmp_path / 'args').read_text()
 	# FZF_DEFAULT_OPTS may contain --multi, a selection must be a single command
-	assert '--query temp' in args and '--no-multi' in args
+	assert '--query temp' in args and '--no-multi' in args and '--read0' in args
 	fake.write_text('#!/bin/sh\nexit 130\n')
 	assert history.fzf_select(['x']) is None
 
@@ -64,3 +64,14 @@ def test_history_shows_each_command_once(tmp_path):
 	assert h.get_strings() == ['find_admins', 'ls', 'cat *']
 	# the file keeps every execution, loading it shows each command once
 	assert list(history.PrivateFileHistory(path).load_history_strings()) == ['cat *', 'ls', 'find_admins']
+
+
+def test_pasted_blocks_become_single_commands(tmp_path):
+	path = tmp_path / 'history'
+	# written by an earlier version: a pasted block as one entry
+	path.write_text('\n# t\n+cd CN=Computers\n\n# t\n+cat\n+ls\n+cd CN=Computers\n\n# t\n+cd ..\n')
+	h = history.PrivateFileHistory(str(path))
+	assert list(h.load_history_strings()) == ['cd ..', 'cd CN=Computers', 'ls', 'cat']
+	h.append_string('whoami\n\nls')
+	assert h.get_strings()[-2:] == ['whoami', 'ls']
+	assert '+whoami\n\n' in path.read_text()

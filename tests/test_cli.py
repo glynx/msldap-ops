@@ -53,3 +53,31 @@ def test_failed_login_leaves_no_connection(monkeypatch):
 	console = MSLDAPOpsConsole(None)
 	assert asyncio.run(console.do_login('ldap://x')) is False
 	assert console.connection is None
+
+
+def test_pasted_block_runs_line_by_line(capsys):
+	import asyncio
+
+	from msldap_ops.shell import MSLDAPOpsConsole
+
+	class Session:
+		def __init__(self, inputs):
+			self.inputs = list(inputs)
+
+		async def prompt_async(self, *args, **kwargs):
+			if not self.inputs:
+				raise EOFError
+			return self.inputs.pop(0)
+
+	console = MSLDAPOpsConsole(None)
+	ran = []
+
+	async def record(command, args):
+		ran.append([command] + args)
+
+	console._run_single_command = record
+	console.session = Session(['cache\nopsec show\n\nnosuchcommand', "opsec 'show", 'log'])
+	asyncio.run(console._run_prompt_forever())
+	assert ran == [['cache'], ['opsec', 'show'], ['log']]
+	out = capsys.readouterr().out
+	assert 'Command nosuchcommand not found!' in out and 'Cannot parse' in out

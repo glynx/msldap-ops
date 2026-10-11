@@ -2,10 +2,12 @@ import asyncio
 import contextlib
 import os
 import re
+import shlex
 import signal
 import sys
 
 from msldap.examples.msldapclient import MSLDAPClientConsole
+from msldap.external.aiocmd.aiocmd.aiocmd import ExitPromptException
 from msldap.protocol.constants import BASE, LEVEL, SUBTREE
 from msldap.wintypes.asn1.sdflagsrequest import SDFlagsRequest, SDFlagsRequestValue
 from prompt_toolkit import PromptSession
@@ -37,6 +39,10 @@ def sd_flags_control():
 	# without SD flags non-admin users get no security descriptor (the SACL needs SeSecurityPrivilege)
 	flags = SDFlagsRequest.OWNER_SECURITY_INFORMATION | SDFlagsRequest.GROUP_SECURITY_INFORMATION | SDFlagsRequest.DACL_SECURITY_INFORMATION
 	return ('1.2.840.113556.1.4.801', True, SDFlagsRequestValue({'Flags': flags}).dump())
+
+
+# _run_line: the line was exit
+EXIT = object()
 
 
 class MSLDAPOpsConsole(MSLDAPClientConsole):
@@ -78,6 +84,40 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			if self._ignore_sigint and sys.platform != 'win32':
 				asyncio.get_event_loop().remove_signal_handler(signal.SIGINT)
 			self._on_close()
+
+	async def _run_prompt_forever(self):
+		"""aiocmd's prompt loop; a pasted block of several lines runs as one command per line, a
+		line that cannot be split (unclosed quote) is reported instead of ending the shell."""
+		while True:
+			try:
+				result = await self.session.prompt_async(self.prompt, completer=self.completer)
+			except EOFError:
+				return
+			for line in result.splitlines():
+				try:
+					if await self._run_line(line) is EXIT:
+						return
+				except asyncio.CancelledError:
+					print()
+					break
+
+	async def _run_line(self, line):
+		try:
+			args = shlex.split(line)
+		except ValueError as e:
+			print('Cannot parse %r: %s' % (line, e))
+			return None
+		if not args:
+			return None
+		if args[0] not in self.command_list:
+			print('Command %s not found!' % args[0])
+			return None
+		self._currently_running_task = asyncio.ensure_future(self._run_single_command(args[0], args[1:]))
+		try:
+			await self._currently_running_task
+		except ExitPromptException:
+			return EXIT
+		return None
 
 	def __init__(self, url=None, querylog=None, gate=None, keepalive=300, cache=None, history_file=None):
 		MSLDAPClientConsole.__init__(self, url)
