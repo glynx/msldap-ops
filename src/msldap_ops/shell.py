@@ -353,14 +353,25 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			get_children=lambda: [d.strip("'") for d in self.get_current_dirs()],
 		)
 
+	async def do_tree(self, dn=None, level=1):
+		"""Tree below a DN, queried live from the DC (default: the domain root, 1 level).
+
+		Sends one one-level search per container down to the given level; on the domain root,
+		level 3 means a search for every container of the first two levels. Repeated calls are
+		answered from the query cache, and everything found also shows up in 'map'.
+		To see what is already known without asking the DC, use 'map'.
+		"""
+		return await MSLDAPClientConsole.do_tree(self, dn, level)
+
 	async def do_map(self, dn=None, depth='3'):
-		"""Tree of the DNs seen so far below a DN (default: the current DN).
+		"""Tree of the DNs seen so far below a DN, without asking the DC (default: current DN).
 
 		map                    below the current DN, 3 levels
 		map <DN|path> [depth]  below another DN (relative paths and .. as for cd), depth 0 = all
 
-		Sends no LDAP query: it shows what the query cache has seen (every result of every
-		command), so it grows while you work. Nodes cut off by the depth show (+n) children.
+		Sends no LDAP query: it draws what the query cache has seen (every result of every
+		command), so it grows while you work and may be incomplete. Nodes cut off by the depth
+		show (+n) children. To explore the current structure live, use 'tree <DN> <level>'.
 		"""
 		if self.connection is None or self._current_dn is None:
 			print('Not connected, run login first')
@@ -382,7 +393,9 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		for line in lines:
 			print(line)
 		if len(lines) == 1:
-			print('(nothing seen below this DN yet)')
+			print("(nothing seen below this DN yet; 'tree' asks the DC)")
+		else:
+			print("(known from the cache, may be incomplete; 'tree' asks the DC)")
 		return True
 
 	def _map_completions(self):

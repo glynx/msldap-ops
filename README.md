@@ -138,12 +138,14 @@ cd ../..                 two levels up
 cd CN=Computers          relative to the current DN, also deeper: OU=Servers,OU=Tier0
 cd <DN>                  absolute, any naming context of the DC (e.g. CN=Configuration,...)
 map [DN|path] [depth]    tree of the DNs seen so far below a DN (default: current, 3 levels)
+tree [DN] [level]        msldap's tree: queried live from the DC
 ```
 
 `cd` completes the children of the current DN, every DN below it that any command has seen so far
 and the naming contexts of the DC. Escaped commas (`CN=Doe\, John`) are handled; completions are
 quoted so that aiocmd's argument parsing keeps them intact. `map` sends no query, it draws the DN
-index of the query cache.
+index of the query cache and may therefore be incomplete. `tree` asks the DC (one search per
+container down to the level) and fills the cache, so its results show up in `map` as well.
 
 ## Query cache
 

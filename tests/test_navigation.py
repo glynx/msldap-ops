@@ -105,7 +105,9 @@ async def test_cd_and_map(tmp_path, capsys):
 	assert console._current_dn == DOMAIN
 
 	assert await console.do_map() is True
-	assert '`-- CN=jon.snow' in capsys.readouterr().out
+	out = capsys.readouterr().out
+	assert '`-- CN=jon.snow' in out
+	assert "'tree' asks the DC" in out
 	assert await console.do_map('CN=Users', 'x') is False
 
 
