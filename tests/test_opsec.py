@@ -49,7 +49,7 @@ async def test_show_prints_and_sends(gated):
 	assert out[1] == '          filter: (objectClass=user)'
 	assert out[2] == '          attributes: *,nTSecurityDescriptor'
 	gate.end_command()
-	assert out[-1] == '[opsec] test: 1 LDAP query issued'
+	assert out[-1] == '[opsec] test: 1 LDAP query sent'
 
 
 async def test_confirm_yes_no(gated):
@@ -97,6 +97,17 @@ async def test_confirm_quit_aborts_the_command(gated):
 	results = await search()
 	assert isinstance(results[0][1], hooks.QueryAborted)
 	assert gate.ask.asked == 1
+	gate.end_command()
+	# nothing went out, the summary must not suggest otherwise
+	assert out[-1] == '[opsec] test: no LDAP queries sent, aborted at query #1'
+
+
+async def test_summary_counts_sent_and_skipped_queries(gated):
+	gate, out = make_gate('confirm', 'y', 'n', 'y')
+	for _ in range(3):
+		await search()
+	gate.end_command()
+	assert out[-1] == '[opsec] test: 2 LDAP queries sent, 1 skipped'
 
 
 async def test_dryrun_sends_nothing(gated, tmp_path):

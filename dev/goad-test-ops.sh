@@ -142,7 +142,7 @@ echo "== certificate templates"
 check "table of templates" '^  Name +CAs +Client Auth +Enrollee Subject +Approval +Vulnerabilities$' "$RESULTS/templates-north.txt"
 check "checked for the bound user" "^Vulnerabilities checked for NORTH\\\\$LOWPRIV_USER\\." "$RESULTS/templates-north.txt"
 check "User template flags decoded one per line" '^  Certificate Name Flag +: SUBJECT_ALT_REQUIRE_UPN$' "$RESULTS/templates-north.txt"
-check "template table needs 4 searches" '^\[opsec\] templates: 4 LDAP queries issued$' "$RESULTS/templates-north.txt"
+check "template table needs 4 searches" '^\[opsec\] templates: 4 LDAP queries sent$' "$RESULTS/templates-north.txt"
 "$OPS" --no-cache --no-log "$ESSOS_URL" login "templates vulnerable" >"$RESULTS/templates-essos.txt" 2>&1 || true
 check "essos: ESC1 template marked" '^  Enrollee Supplies Subject +: True \[!\]$' "$RESULTS/templates-essos.txt"
 check "essos: ESC1 reported for $ESSOS_LOWPRIV_USER" "^  \\[!\\] Vulnerabilities for ESSOS\\\\$ESSOS_LOWPRIV_USER" "$RESULTS/templates-essos.txt"
@@ -154,7 +154,7 @@ echo
 echo "== opsec"
 "$OPS" --no-cache --no-log --opsec show "$URL" login find_admins >"$RESULTS/opsec-show.txt" 2>&1 || true
 check "show prints the queries before they are sent" '^\[ldap #1\] DC=' "$RESULTS/opsec-show.txt"
-check "show reports the number of queries per command" '^\[opsec\] find_admins: [0-9]+ LDAP quer(y|ies) issued$' "$RESULTS/opsec-show.txt"
+check "show reports the number of queries per command" '^\[opsec\] find_admins: [0-9]+ LDAP quer(y|ies) sent$' "$RESULTS/opsec-show.txt"
 echo "   INFO  $(grep -E '^\[opsec\] (login|find_admins):' "$RESULTS/opsec-show.txt" | tr '\n' ';')"
 "$OPS" --no-cache --no-log --opsec show "$URL" login "cd CN=Computers" >"$RESULTS/opsec-cd.txt" 2>&1 || true
 check "cd shows its query" '^\[ldap #1\] CN=Computers,DC=' "$RESULTS/opsec-cd.txt"
@@ -169,16 +169,16 @@ echo "== query cache"
 CACHE_ARGS=(--no-log --cache-dir "$RESULTS/cache" --opsec show)
 "$OPS" "${CACHE_ARGS[@]}" "$URL" login find_admins find_admins cache >"$RESULTS/cache-1.txt" 2>&1 || true
 check "second find_admins is answered from the cache" '^\[cache\] ' "$RESULTS/cache-1.txt"
-check "the second find_admins sends nothing" '^\[opsec\] find_admins: no LDAP queries issued, [1-9][0-9]* answered from the cache$' "$RESULTS/cache-1.txt"
+check "the second find_admins sends nothing" '^\[opsec\] find_admins: no LDAP queries sent, [1-9][0-9]* answered from the cache$' "$RESULTS/cache-1.txt"
 check "cache command shows hits" '^  [0-9]+ queries \([0-9]+ results\), [0-9]+ DNs known, [1-9][0-9]* hits' "$RESULTS/cache-1.txt"
 check_cmd "cache file written" bash -c "ls '$RESULTS/cache/'*.json >/dev/null 2>&1"
 "$OPS" "${CACHE_ARGS[@]}" "$URL" login find_admins >"$RESULTS/cache-2.txt" 2>&1 || true
-check "a new session reuses the persisted cache" '^\[opsec\] find_admins: no LDAP queries issued, [1-9][0-9]* answered from the cache$' "$RESULTS/cache-2.txt"
+check "a new session reuses the persisted cache" '^\[opsec\] find_admins: no LDAP queries sent, [1-9][0-9]* answered from the cache$' "$RESULTS/cache-2.txt"
 "$OPS" "${CACHE_ARGS[@]}" "$URL" login "cache flush" find_admins >"$RESULTS/cache-3.txt" 2>&1 || true
 check "flush empties the cache" '^Dropped [0-9]+ cached quer(y|ies) and the DN index$' "$RESULTS/cache-3.txt"
-check "after a flush the queries are sent again" '^\[opsec\] find_admins: [0-9]+ LDAP quer(y|ies) issued$' "$RESULTS/cache-3.txt"
+check "after a flush the queries are sent again" '^\[opsec\] find_admins: [0-9]+ LDAP quer(y|ies) sent$' "$RESULTS/cache-3.txt"
 "$OPS" "${CACHE_ARGS[@]}" "$URL" login "cache flush" "bofhound_collect adcs" templates >"$RESULTS/cache-4.txt" 2>&1 || true
-check "templates reuses the ADCS data of bofhound_collect" '^\[opsec\] templates: 2 LDAP queries issued, 2 answered from the cache$' "$RESULTS/cache-4.txt"
+check "templates reuses the ADCS data of bofhound_collect" '^\[opsec\] templates: 2 LDAP queries sent, 2 answered from the cache$' "$RESULTS/cache-4.txt"
 
 echo
 echo "== bofhound import"

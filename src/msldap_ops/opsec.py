@@ -70,22 +70,35 @@ class OpsecGate:
 		self.command = command
 		self._send_all = False
 		self._aborted = False
-		self.counter = 0
+		self.counter = 0  # queries shown, numbers them
+		self.sent = 0
+		self.skipped = 0
+		self.aborted_at = None
 		self.cached_counter = 0
 
 	def _navigation(self):
 		return self.command in NAVIGATION_COMMANDS
 
+	def summary(self):
+		"""What actually happened: sent, skipped, aborted, answered from the cache."""
+		def queries(n):
+			return '%d LDAP %s' % (n, 'query' if n == 1 else 'queries')
+
+		if self.mode == 'dryrun' and self.counter:
+			parts = ['%s shown, none sent' % queries(self.counter)]
+		else:
+			parts = [queries(self.sent) + ' sent' if self.sent else 'no LDAP queries sent']
+		if self.skipped:
+			parts.append('%d skipped' % self.skipped)
+		if self.aborted_at is not None:
+			parts.append('aborted at query #%d' % self.aborted_at)
+		if self.cached_counter:
+			parts.append('%d answered from the cache' % self.cached_counter)
+		return ', '.join(parts)
+
 	def end_command(self):
 		if (self.counter or self.cached_counter) and self.mode in ('show', 'confirm', 'dryrun') and not self._navigation():
-			if self.counter:
-				text = '%d LDAP %s %s' % (self.counter, 'query' if self.counter == 1 else 'queries',
-					'shown, none sent' if self.mode == 'dryrun' else 'issued')
-			else:
-				text = 'no LDAP queries issued'
-			if self.cached_counter:
-				text += ', %d answered from the cache' % self.cached_counter
-			self.out('[opsec] %s: %s' % (self.command, text))
+			self.out('[opsec] %s: %s' % (self.command, self.summary()))
 		self.command = None
 
 	def cached(self, query):
@@ -109,6 +122,7 @@ class OpsecGate:
 		if self.mode == 'dryrun':
 			return hooks.SKIP
 		if self.mode == 'show' or self._send_all or self._navigation():
+			self.sent += 1
 			return hooks.SEND
 
 		while True:
@@ -117,13 +131,17 @@ class OpsecGate:
 			except (EOFError, KeyboardInterrupt):
 				answer = 'q'
 			if answer in ('y', 'yes'):
+				self.sent += 1
 				return hooks.SEND
 			if answer in ('n', 'no'):
+				self.skipped += 1
 				self.out('skipped')
 				return hooks.SKIP
 			if answer in ('a', 'all'):
 				self._send_all = True
+				self.sent += 1
 				return hooks.SEND
 			if answer in ('q', 'quit'):
 				self._aborted = True
+				self.aborted_at = self.counter
 				raise hooks.QueryAborted('aborted by operator')

@@ -149,7 +149,7 @@ Not cached: the keepalive, searches a command stopped early, failed searches. ad
 drop all cached queries. Changes made with other tools show up after the TTL or a `cache flush`.
 Searches answered from the cache send nothing, so `opsec confirm` does not ask for them; `opsec`
 shows them as one `[cache]` line and counts them separately (`[opsec] find_admins: 2 LDAP queries
-issued, 8 answered from the cache`). The query journal records them with `"cached": true`; they are
+sent, 8 answered from the cache`). The query journal records them with `"cached": true`; they are
 not written to the bofhound log again. `--cache-memory-only` keeps the cache off the disk, `--no-cache` disables it.
 
 The cache also keeps an index of every DN seen in a result, for navigation.
@@ -168,7 +168,8 @@ what happens before an LDAP search is sent:
   ones (e.g. `find_admins`) only show their first stage; `help <command>` lists the queries of the
   msldap-ops commands.
 
-After each command the number of queries is printed. Every query, including skipped ones, is
+After each command a summary shows what actually happened: queries sent, skipped, where the command
+was aborted, and how many searches were answered from the cache. Every query, including skipped ones, is
 recorded in the query journal.
 
 The msldap shell sends a keepalive search on the domain object every 10 seconds. msldap-ops uses
