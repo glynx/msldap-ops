@@ -109,9 +109,13 @@ class StyledStream(io.TextIOBase):
 		if not enabled():
 			return self.target.write(data)
 		self._buf += data
+		if '\n' not in self._buf:
+			return len(data)
 		while '\n' in self._buf:
 			line, self._buf = self._buf.split('\n', 1)
 			self.target.write(render(line) + '\n')
+		# prompt_toolkit's stdout proxy only shows what was flushed
+		self.target.flush()
 		return len(data)
 
 	def flush(self):
