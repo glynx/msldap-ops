@@ -211,6 +211,10 @@ ESSOS_LOW_URL="$(mkurl "$PY" ESSOS "$ESSOS_LOWPRIV_USER" "$ESSOS_LOWPRIV_PASS" "
 msldap_cli "$PY" cli-certify2-essos.txt "$ESSOS_LOW_URL" login certify2
 check "certify2 finds ESC1 on essos" 'ESC1 - ' "$RESULTS/cli-certify2-essos.txt"
 
+msldap_cli "$PY" cli-certify2-essos-domain.txt "$ESSOS_LOW_URL" login "certify2 ESSOS/$ESSOS_LOWPRIV_USER" "certify2 $ESSOS_LOWPRIV_USER@essos.local" "certify2 NORTH/$LOWPRIV_USER"
+check "certify2 accepts DOMAIN/user and user@domain" '^Template Name:' "$RESULTS/cli-certify2-essos-domain.txt"
+check "certify2 rejects users of other domains explicitly" 'belongs to domain NORTH' "$RESULTS/cli-certify2-essos-domain.txt"
+
 # --- optional baseline -----------------------------------------------------------
 if [[ $COMPARE -eq 1 ]]; then
   BWT="$(prepare_checkout base "$BASE_BRANCH")"
