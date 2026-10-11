@@ -21,11 +21,11 @@ class Answers:
 		return self.answers.pop(0)
 
 
-def make_gate(mode, *answers):
+def make_gate(mode, *answers, command='test'):
 	out = []
 	gate = OpsecGate(mode, ask=Answers(*answers), out=out.append)
 	hooks.set_gate(gate)
-	gate.start_command('test')
+	gate.start_command(command)
 	return gate, out
 
 
@@ -57,6 +57,23 @@ async def test_confirm_yes_no(gated):
 	assert len(await search()) == 1
 	assert await search() == []
 	assert gate.ask.asked == 3  # 'maybe' is asked again
+
+
+async def test_confirm_lets_the_single_query_of_navigation_commands_through(gated):
+	gate, out = make_gate('confirm', 'n', command='cd')
+	assert len(await search()) == 1
+	assert gate.ask.asked == 0
+	assert out[0].startswith('[ldap #1] ')
+	# an unexpected second query is confirmed as usual
+	assert await search() == []
+	assert gate.ask.asked == 1
+
+
+async def test_no_summary_for_a_single_navigation_query(gated):
+	gate, out = make_gate('show', command='cat')
+	await search()
+	gate.end_command()
+	assert not any(line.startswith('[opsec]') for line in out)
 
 
 async def test_confirm_all_sends_the_rest_of_the_command(gated):
