@@ -20,14 +20,15 @@
       `LDAP_MATCHING_RULE_IN_CHAIN`, groups resolved by RID/SID (localized names, e.g. "Domänen-Admins") -> `find_admins`
 - [x] Admins with SPN, admins not in Protected Users / not "sensitive", admins with
       `PASSWORD_NEVER_EXPIRES`
-- [ ] Verify `find_admins` against GOAD (`dev/goad-test-ops.sh`)
+- [x] Verify `find_admins` against GOAD (`dev/goad-test-ops.sh`)
 - [ ] `find_admins` across the forest: resolve forest root group members via a second connection or the GC
 
 ## Opsec
 
 - [x] `opsec off|show|confirm|dryrun` for every search, `--opsec`, query count per command
 - [x] Keepalive every 300 s instead of 10 s, `--keepalive`
-- [ ] Verify against GOAD (`dev/goad-test-ops.sh`), try `confirm` interactively
+- [x] Verify against GOAD (`dev/goad-test-ops.sh`)
+- [ ] Try `confirm` interactively
 - [ ] Optional jitter for `bofhound_collect` delays
 
 ## Navigation
@@ -44,7 +45,7 @@
 - [x] Template output like certipy: decoded `msPKI-Certificate-Name-Flag`, `msPKI-Enrollment-Flag`,
       `msPKI-Private-Key-Flag`, EKUs, with the security relevant bits highlighted
       (ENROLLEE_SUPPLIES_SUBJECT, NO_SECURITY_EXTENSION, PEND_ALL_REQUESTS, ...) -> `templates`
-- [ ] Verify `templates` against GOAD (`dev/goad-test-ops.sh`)
+- [x] Verify `templates` against GOAD (`dev/goad-test-ops.sh`)
 - [ ] CA level checks (ESC6 EDITF_ATTRIBUTESUBJECTALTNAME2, ESC7 CA permissions, ESC8 web enrollment)
       need the CA registry/RPC, not LDAP; at least list the CA permissions from LDAP
 - [ ] Cross-domain / cross-forest checks (`adcs-check [DOMAIN\user]`): take the token groups from
