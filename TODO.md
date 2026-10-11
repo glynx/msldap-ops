@@ -2,11 +2,13 @@
 
 ## Core
 
-- [ ] Monkeypatch hook on `msldap.connection.convert_result` to see every raw search result
-      (shared by logging and the DN cache)
-- [ ] Query logging in pyldapsearch/bofhound format, written to the current working directory
-      (`./msldap-ops-logs/`), verified against the bofhound parser
-- [ ] SD flags control by default when `nTSecurityDescriptor` is requested
+- [x] Monkeypatch hooks on `msldap.connection.convert_result` and `MSLDAPClientConnection.search` /
+      `pagedsearch` to see every raw search result with its query (shared by logging and the DN cache)
+- [x] Query logging in pyldapsearch/bofhound format, written to the current working directory
+      (`./msldap-ops-logs/`), verified against the bofhound parser (offline roundtrip)
+- [ ] Verify the query log against GOAD (`dev/goad-test-ops.sh`)
+- [x] SD flags control by default when `nTSecurityDescriptor` is requested (`query` in the fork)
+- [ ] Optional per-query output file (like pyldapsearch `-output`)
 
 ## Presets
 
