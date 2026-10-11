@@ -115,3 +115,32 @@ def test_quote_survives_shlex():
 	import shlex
 	for name in ['CN=Doe\\, John', 'OU=Domain Controllers', "CN=O'Brien", 'CN=Users']:
 		assert shlex.split(navigation.quote(name)) == [name]
+
+
+def test_cat_arguments():
+	from msldap_ops.navigation import cat_arguments
+	assert cat_arguments([]) == ('.', '*')
+	assert cat_arguments(['', '']) == ('.', '*')
+	assert cat_arguments(['*']) == ('*', '*')
+	assert cat_arguments(['*', 'cn,member']) == ('*', 'cn,member')
+	assert cat_arguments(['CN=Users', 'cn']) == ('CN=Users', 'cn')
+	assert cat_arguments(['..']) == ('..', '*')
+	# msldap's order: attributes first
+	assert cat_arguments(['cn,description']) == ('.', 'cn,description')
+	assert cat_arguments(['*', 'CN=Administrators']) == ('CN=Administrators', '*')
+	assert cat_arguments(['cn', '..']) == ('..', 'cn')
+
+
+def test_split_glob():
+	from msldap_ops.navigation import split_glob
+	assert split_glob('CN=Users') is None
+	assert split_glob('.') is None
+	assert split_glob('*') == ('.', '(objectClass=*)')
+	assert split_glob('CN=Domain*') == ('.', '(CN=Domain*)')
+	assert split_glob('OU=*,OU=Tier0') == ('OU=Tier0', '(OU=*)')
+	assert split_glob('../*') == ('..', '(objectClass=*)')
+	assert split_glob('../../CN=B*') == ('../..', '(CN=B*)')
+	assert split_glob('CN=Doe\\, J*') == ('.', '(CN=Doe, J*)')
+	assert split_glob('CN=a(b)*') == ('.', '(CN=a\\28b\\29*)')
+	# only the last element may be a pattern
+	assert split_glob('CN=x,OU=*') is None

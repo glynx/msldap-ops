@@ -3,6 +3,8 @@
 The known DNs come from the query cache's DN index, i.e. every object any command has seen so far.
 """
 
+import re
+
 from prompt_toolkit.completion import Completer, Completion
 
 
@@ -90,6 +92,57 @@ def resolve(path, current, naming_contexts):
 	if naming_contexts and naming_context_of(target, naming_contexts) is None:
 		raise ValueError('%s is not stored on this DC.%s' % (target, _nc_hint(naming_contexts)))
 	return target
+
+
+def looks_like_path(arg):
+	"""'.', '..', '*', '../x' or anything with an RDN (CN=..., OU=...); attribute lists have no '='."""
+	return arg in ('.', '..', '*') or arg.startswith('../') or arg.startswith('..,') or '=' in arg
+
+
+def cat_arguments(args):
+	"""(path, attributes) for cat. The order is cat [path] [attributes]; msldap's order
+	cat [attributes] [path] is recognized by the second argument: attribute names have no '='."""
+	args = [a for a in args if a != '']
+	if len(args) >= 2 and args[1] != '*' and looks_like_path(args[1]):
+		args = [args[1], args[0]] + args[2:]
+	elif len(args) == 1 and not looks_like_path(args[0]):
+		args = ['.', args[0]]
+	path = args[0] if args else '.'
+	attributes = args[1] if len(args) > 1 else '*'
+	return path, attributes
+
+
+def split_glob(path):
+	"""(parent path, filter) if the last element of path is a pattern ('*', 'CN=Dom*', '../OU=*'),
+	else None. Only the first RDN may contain '*': cat * lists the children, cat CN=Dom* the
+	matching ones."""
+	prefix = ''
+	while path.startswith('../') or path.startswith('..,'):
+		prefix += '../'
+		path = path[3:]
+	rdns = split_dn(path)
+	if not rdns or '*' not in rdns[0] or any('*' in r for r in rdns[1:]):
+		return None
+	parent = (prefix + join_dn(rdns[1:])) if rdns[1:] else (prefix.rstrip('/') or '.')
+	if rdns[0] == '*':
+		return parent, '(objectClass=*)'
+	attribute, sep, value = rdns[0].partition('=')
+	if not sep or not attribute.strip():
+		return None
+	# DN escapes (CN=Doe\, J*) are plain characters in the filter
+	value = re.sub(r'\\(.)', r'\1', value.strip())
+	return parent, '(%s=%s)' % (attribute.strip(), escape_glob(value))
+
+
+def escape_glob(value):
+	"""RFC 4515 escaping except for '*', which stays a wildcard."""
+	out = []
+	for ch in value:
+		if ch in '()\\\0':
+			out.append('\\%02x' % ord(ch))
+		else:
+			out.append(ch)
+	return ''.join(out)
 
 
 def _nc_hint(naming_contexts):

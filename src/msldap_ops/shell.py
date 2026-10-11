@@ -558,24 +558,35 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 				return False
 		return await self._print_objects(query, attrs, base, scopes[str(scope).lower()])
 
-	async def do_cat(self, attributes='*', dn=''):
-		"""Attributes of one object (default: the current DN).
+	async def do_cat(self, path='', attributes=''):
+		"""Attributes of objects, like cat in a shell.
 
-		cat [attributes] [DN|path]   attributes comma separated (default *), the object as DN or
-		                             path relative to the current DN (as for cd)
+		cat [path] [attributes]
+		  path        '.' or nothing: the current object; '*': every child of the current DN;
+		              a pattern in the last element: CN=Domain*, OU=*, ../CN=*;
+		              otherwise a DN or path as for cd (CN=Users, .., ../CN=Builtin)
+		  attributes  comma separated, default *; nTSecurityDescriptor is requested with the
+		              SD flags control
+		msldap's order (cat [attributes] [path], e.g. cat cn,description CN=Users) works as well.
+		One search: base scope for an object, one level for '*' and patterns.
 		"""
 		if self.connection is None:
 			print('Not connected, run login first')
 			return False
-		target = self._current_dn
-		if dn:
-			try:
-				target = navigation.resolve(dn, self._current_dn, self._naming_contexts())
-			except ValueError as e:
-				print(e)
-				return False
-		attrs = [a.strip() for a in (attributes or '*').split(',') if a.strip()] or ['*']
+		path, attributes = navigation.cat_arguments([path, attributes])
+		attrs = [a.strip() for a in attributes.split(',') if a.strip()] or ['*']
+		glob = navigation.split_glob(path)
+		try:
+			target = navigation.resolve(glob[0] if glob else path, self._current_dn, self._naming_contexts())
+		except ValueError as e:
+			print(e)
+			return False
+		if glob:
+			return await self._print_objects(glob[1], attrs, target, LEVEL)
 		return await self._print_objects('(objectClass=*)', attrs, target, BASE, count=False)
+
+	def _cat_completions(self):
+		return self._cd_completions()
 
 	async def _print_objects(self, query, attrs, base, scope, count=True):
 		controls = [sd_flags_control()] if any(a.lower() == 'ntsecuritydescriptor' for a in attrs) else None

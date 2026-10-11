@@ -137,7 +137,8 @@ cd ..                    parent DN (refused above the naming context of the DC, 
 cd ../..                 two levels up
 cd CN=Computers          relative to the current DN, also deeper: OU=Servers,OU=Tier0
 cd <DN>                  absolute, any naming context of the DC (e.g. CN=Configuration,...)
-cat [attributes] [path]  attributes of the current object or of a DN/path
+cat [path] [attributes]  attributes of the current object (cat, cat .), of every child (cat *),
+                         of matching children (cat CN=Domain*, cat ../OU=*) or of a DN/path
 query <filter> [attributes] [base|path] [base|one|sub]
 map [DN|path] [depth]    tree of the DNs seen so far below a DN (default: current, 3 levels)
 tree [DN] [level]        msldap's tree: queried live from the DC
@@ -145,7 +146,8 @@ tree [DN] [level]        msldap's tree: queried live from the DC
 
 `cd` completes the children of the current DN, every DN below it that any command has seen so far
 and the naming contexts of the DC. Escaped commas (`CN=Doe\, John`) are handled; completions are
-quoted so that aiocmd's argument parsing keeps them intact. `map` sends no query, it draws the DN
+quoted so that aiocmd's argument parsing keeps them intact. `cat` takes attributes as a comma separated
+list (`cat * cn,description`); msldap's order `cat [attributes] [path]` works as well. `map` sends no query, it draws the DN
 index of the query cache and may therefore be incomplete. `tree` asks the DC (one search per
 container down to the level) and fills the cache, so its results show up in `map` as well.
 

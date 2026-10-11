@@ -72,6 +72,20 @@ async def test_query_and_cat(capsys):
 
 	assert await console.do_query('(cn=*)', '*', '-', 'bogus') is False
 
+	# cat: the current object, every child, a pattern
+	assert await console.do_cat() is True
+	assert console.connection.calls[-1][3:] == ('CN=Users,' + DOMAIN, 0)
+	assert await console.do_cat('.', 'cn') is True
+	assert console.connection.calls[-1][1] == ['cn']
+	capsys.readouterr()
+	assert await console.do_cat('*') is True
+	query, attrs, controls, tree, scope = console.connection.calls[-1]
+	assert (query, attrs, tree, scope) == ('(objectClass=*)', ['*'], 'CN=Users,' + DOMAIN, 1)
+	assert capsys.readouterr().out.rstrip().endswith('object)')
+	assert await console.do_cat('../CN=Dom*', 'cn') is True
+	query, attrs, controls, tree, scope = console.connection.calls[-1]
+	assert (query, attrs, tree, scope) == ('(CN=Dom*)', ['cn'], DOMAIN, 1)
+
 
 def test_search_errors_are_readable():
 	from msldap.commons.exceptions import LDAPSearchException
