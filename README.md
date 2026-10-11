@@ -203,6 +203,7 @@ forest, are named if `bofhound_collect` (preset `schema`) put the schema into th
 the command needs a target instead of dumping the whole domain by default:
 
 ```text
+laps                      the current object, when it is a computer (same as laps .)
 laps kingslanding$        one computer by sAMAccountName or name ('$' optional)
 laps *srv*                computers matching a pattern
 laps all                  every computer with LAPS (reads many passwords!)

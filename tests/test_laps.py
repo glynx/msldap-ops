@@ -80,13 +80,36 @@ def run_laps(entries, target):
 	return console.connection, ok
 
 
-def test_command_requires_a_target(capsys):
+def test_command_on_the_current_object(capsys):
+	from msldap.protocol.constants import BASE
+
+	from msldap_ops.shell import MSLDAPOpsConsole
+	e = entry('CN=PC1,DC=x', **{'sAMAccountName': 'PC1$', 'ms-Mcs-AdmPwd': 'Pw1'})
+
+	class BaseClient(Client):
+		async def pagedsearch(self, query, attributes, controls=None, tree=None, search_scope=2):
+			self.queries.append((query, tree, search_scope))
+			for item in self.entries:
+				yield item, None
+
+	console = MSLDAPOpsConsole(None)
+	console.connection = BaseClient([e])
+	console._current_dn = 'CN=PC1,DC=x'
+	# laps and laps . both read the current object with a base search
+	assert asyncio.run(console.do_laps()) is True
+	assert console.connection.queries[-1] == ('(sAMAccountType=805306369)', 'CN=PC1,DC=x', BASE)
+	assert 'Pw1' in capsys.readouterr().out
+	assert asyncio.run(console.do_laps('.')) is True
+	assert console.connection.queries[-1][1:] == ('CN=PC1,DC=x', BASE)
+
+
+def test_command_on_a_non_computer(capsys):
 	from msldap_ops.shell import MSLDAPOpsConsole
 	console = MSLDAPOpsConsole(None)
-	console.connection = Client([])
-	assert asyncio.run(console.do_laps()) is False
-	assert 'Usage:' in capsys.readouterr().out
-	assert console.connection.queries == []  # nothing read without a target
+	console.connection = Client([])  # base search returns nothing (filter does not match)
+	console._current_dn = 'CN=jon,DC=x'
+	assert asyncio.run(console.do_laps()) is True
+	assert 'is not a computer with LAPS' in capsys.readouterr().out
 
 
 def test_command_targets_one_machine(capsys):

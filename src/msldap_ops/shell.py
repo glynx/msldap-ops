@@ -738,9 +738,10 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 	def _find_completions(self):
 		return WordCompleter([])
 
-	async def do_laps(self, target=None):
+	async def do_laps(self, target='.'):
 		"""Reads the LAPS local administrator password of a computer (both LAPS versions).
 
+		laps                     the current object (when it is a computer); same as laps .
 		laps <computer|pattern>  by sAMAccountName or name, '*' as wildcard (kingslanding$, *srv*)
 		laps all                 every computer with LAPS in the domain (reads many passwords!)
 		Shows the version, the password where readable (Windows LAPS encrypted blobs need an RPC
@@ -749,18 +750,19 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		if self.connection is None:
 			print('Not connected, run login first')
 			return False
-		if not target:
-			print('Usage: laps <computer|pattern>, or laps all for every computer (reads many passwords)')
-			return False
-		if target == 'all':
-			query = laps.COMPUTER_FILTER
+		scope = SUBTREE
+		if target in ('', '.'):
+			# the object we are standing on, one base search
+			base, query, scope = self._current_dn, laps.COMPUTER_FILTER, BASE
+		elif target == 'all':
+			base, query = self.connection._tree, laps.COMPUTER_FILTER
 		else:
 			value = navigation.escape_glob(target if target.endswith('$') or '*' in target else target + '$')
 			name = navigation.escape_glob(target)
+			base = self.connection._tree
 			query = '(&%s(|(sAMAccountName=%s)(name=%s)))' % (laps.COMPUTER_FILTER, value, name)
-		base = self.connection._tree
 		entries = []
-		async for entry, err in self.connection.pagedsearch(query, laps.ATTRIBUTES, tree=base):
+		async for entry, err in self.connection.pagedsearch(query, laps.ATTRIBUTES, tree=base, search_scope=scope):
 			if err is not None:
 				print(records.search_error(err, base))
 				return False
@@ -768,7 +770,12 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			if item.configured:
 				entries.append(item)
 		if not entries:
-			print('No computer with LAPS found' if target == 'all' else 'No computer with LAPS matched %r' % target)
+			if target in ('', '.'):
+				print('%s is not a computer with LAPS' % (self._current_dn or 'the current object'))
+			elif target == 'all':
+				print('No computer with LAPS found')
+			else:
+				print('No computer with LAPS matched %r' % target)
 			return True
 		for item in sorted(entries, key=lambda e: e.name.lower()):
 			ui.emit(laps.format_entry(item))
@@ -776,7 +783,7 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		return True
 
 	def _laps_completions(self):
-		return WordCompleter(['all'])
+		return WordCompleter(['.', 'all'])
 
 	async def do_acl(self, path='.', show='all'):
 		"""Readable ACL of one object: owner, DACL with decoded rights, object types and scope.
