@@ -10,8 +10,9 @@ build/
 dev/.work/
 dev/results/
 
-# query logs written to the working directory
+# query logs and cache written to the working directory
 msldap-ops-logs/
+msldap-ops-cache/
 
 # local GOAD lab settings
 dev/goad.env

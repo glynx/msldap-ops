@@ -14,6 +14,9 @@ Listeners implement any subset of ``query_start(query)``, ``query_entry(query, e
 A gate (see :func:`set_gate`) is asked before a query is sent and can let it through, skip it
 (the caller gets an empty result) or abort it (the caller gets an error).
 
+A cache (see :func:`set_cache`) can answer a search from earlier results; the gate is not asked
+then, nothing is sent. add/modify/delete invalidate the cached queries.
+
 Queries that do not run in the foreground task (see :func:`set_foreground`), e.g. msldap's
 keepalive, are marked as ``background``.
 """
@@ -31,10 +34,13 @@ from msldap.connection import MSLDAPClientConnection
 logger = logging.getLogger(__name__)
 
 SCOPE_NAMES = {0: 'base', 1: 'one', 2: 'sub'}
+# operations that change the directory and invalidate cached searches
+WRITE_METHODS = ('add', 'modify', 'delete')
 
 _listeners = []
 _originals = {}
 _gate = None
+_cache = None
 # UNMANAGED: no shell is tracking commands, every query counts as foreground.
 # Otherwise the task of the running command, or None between commands (then every query,
 # e.g. msldap's keepalive, is background).
@@ -70,6 +76,7 @@ class QueryInfo:
 		self.error = None
 		self.background = _is_background()
 		self.skipped = False
+		self.cached = False
 
 	def to_dict(self):
 		return {
@@ -85,6 +92,7 @@ class QueryInfo:
 			'error': None if self.error is None else str(self.error),
 			'background': self.background,
 			'skipped': self.skipped,
+			'cached': self.cached,
 		}
 
 
@@ -129,6 +137,12 @@ def set_gate(gate):
 	_gate = gate
 
 
+def set_cache(cache):
+	"""cache: msldap_ops.cache.QueryCache or None."""
+	global _cache
+	_cache = cache
+
+
 def add_listener(listener):
 	if listener not in _listeners:
 		_listeners.append(listener)
@@ -165,7 +179,7 @@ def _wrap_search(original, controls_param, passthrough=None):
 		bound = signature.bind(self, *args, **kwargs)
 		bound.apply_defaults()
 		params = bound.arguments
-		if (not _listeners and _gate is None) or (passthrough is not None and params.get(passthrough)):
+		if (not _listeners and _gate is None and _cache is None) or (passthrough is not None and params.get(passthrough)):
 			async for item in original(self, *args, **kwargs):
 				yield item
 			return
@@ -178,6 +192,29 @@ def _wrap_search(original, controls_param, passthrough=None):
 			params['search_scope'],
 			_flatten_controls(params.get(controls_param)),
 		)
+		key = None
+		if _cache is not None and not info.background:
+			# the keepalive has to reach the server, it is neither answered from nor stored in the cache
+			from msldap_ops.cache import query_key
+			_cache.bind(self)
+			key, parts = query_key(original.__name__, params)
+			raws = _cache.get(key)
+			if raws is not None:
+				info.cached = True
+				if _gate is not None and hasattr(_gate, 'cached'):
+					_gate.cached(info)
+				_notify('query_start', info)
+				try:
+					for raw in raws:
+						entry = msldap.connection.convert_result(raw)
+						info.count += 1
+						_notify('query_entry', info, entry)
+						yield entry, None
+				finally:
+					info.finished = datetime.datetime.now(datetime.timezone.utc)
+					_notify('query_end', info)
+				return
+
 		if _gate is not None:
 			try:
 				decision = await _gate(info)
@@ -195,17 +232,37 @@ def _wrap_search(original, controls_param, passthrough=None):
 				return
 
 		_notify('query_start', info)
+		raws = []
+		complete = False
 		try:
 			async for entry, err in original(self, *args, **kwargs):
 				if err is not None:
 					info.error = err
 				elif entry is not None:
 					info.count += 1
+					raws.append(getattr(entry, 'raw', None))
 					_notify('query_entry', info, entry)
 				yield entry, err
+			complete = True
 		finally:
 			info.finished = datetime.datetime.now(datetime.timezone.utc)
+			# only complete, successful searches; a caller that stopped early saw only a part
+			if key is not None and complete and info.error is None and None not in raws:
+				_cache.put(key, parts, raws)
 			_notify('query_end', info)
+
+	wrapper.__msldap_ops_original__ = original
+	return wrapper
+
+
+def _wrap_write(original):
+	@functools.wraps(original)
+	async def wrapper(self, *args, **kwargs):
+		try:
+			return await original(self, *args, **kwargs)
+		finally:
+			if _cache is not None:
+				_cache.invalidate_queries()
 
 	wrapper.__msldap_ops_original__ = original
 	return wrapper
@@ -234,6 +291,9 @@ def install():
 	# separately, the surrounding pagedsearch already is
 	MSLDAPClientConnection.search = _wrap_search(_originals['search'], 'controls', passthrough='return_done')
 	MSLDAPClientConnection.pagedsearch = _wrap_search(_originals['pagedsearch'], 'controls')
+	for name in WRITE_METHODS:
+		_originals[name] = getattr(MSLDAPClientConnection, name)
+		setattr(MSLDAPClientConnection, name, _wrap_write(_originals[name]))
 
 
 def uninstall():
@@ -242,3 +302,5 @@ def uninstall():
 	msldap.connection.convert_result = _originals.pop('convert_result')
 	MSLDAPClientConnection.search = _originals.pop('search')
 	MSLDAPClientConnection.pagedsearch = _originals.pop('pagedsearch')
+	for name in WRITE_METHODS:
+		setattr(MSLDAPClientConnection, name, _originals.pop(name))

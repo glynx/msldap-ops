@@ -12,6 +12,8 @@ Features:
 - **Collection presets** for bofhound, split per object type (users, computers, groups, OUs, GPOs,
   schema, ADCS, ...), so that no single query returns the whole directory.
 
+- **Query cache** (`cache`): repeated searches are answered from earlier results, persisted per
+  server and account.
 - **Opsec modes** (`opsec`): show, confirm or suppress every LDAP search before it is sent, for all
   commands including the msldap built-ins.
 - **Certificate templates** (`templates`) in a certipy-like layout with decoded flags.
@@ -125,6 +127,28 @@ principals of the enrollment and object control permissions. Vulnerabilities (ES
 checked for the token of the bound user; an account bound through a trust is checked as a low
 privileged user of the connected domain. The table needs 4 LDAP searches, the details additionally
 resolve the SIDs of the permissions.
+
+## Query cache
+
+Repeated searches (same base, scope, filter, attributes and controls) within the TTL are answered from
+the cache, without contacting the server. This applies to every command, including the msldap
+built-ins. The cache is kept per server and account and written to `./msldap-ops-cache/` as JSON, so
+a new session reuses it.
+
+```text
+cache                  state, size, hits/misses, cache file
+cache list             cached queries with age and number of results
+cache flush [text]     drop everything, or the queries whose base DN or filter contains text
+cache ttl <seconds>    lifetime of cached results (default 1800, --cache-ttl)
+cache on | off         use the cache or always ask the server
+```
+
+Not cached: the keepalive, searches a command stopped early, failed searches. add/modify/delete
+drop all cached queries. Changes made with other tools show up after the TTL or a `cache flush`.
+`opsec show` marks searches answered from the cache with `[cache]`; they are not written to the
+bofhound log again. `--cache-memory-only` keeps the cache off the disk, `--no-cache` disables it.
+
+The cache also keeps an index of every DN seen in a result, for navigation.
 
 ## Opsec
 

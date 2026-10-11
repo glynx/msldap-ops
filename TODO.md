@@ -33,7 +33,9 @@
 
 ## Navigation
 
-- [ ] Cache of all DNs seen so far (optionally persisted per target)
+- [x] Query cache with TTL, persisted per server/account as JSON, `cache` command with flush;
+      index of all DNs seen so far
+- [ ] Verify the cache against GOAD (`dev/goad-test-ops.sh`)
 - [ ] `cd` completion from the cache instead of only the current level
 - [ ] `cd ..` above the naming context of the DC (e.g. from DC=north,... to DC=sevenkingdoms,...)
       fails with a raw "referral" error; explain it and offer the naming contexts of the DC instead

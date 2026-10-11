@@ -17,9 +17,10 @@ def sd_flags_control():
 class MSLDAPOpsConsole(MSLDAPClientConsole):
 	"""msldap shell with additional msldap-ops commands. All msldap commands remain available."""
 
-	def __init__(self, url=None, querylog=None, gate=None, keepalive=300):
+	def __init__(self, url=None, querylog=None, gate=None, keepalive=300, cache=None):
 		MSLDAPClientConsole.__init__(self, url)
 		self.querylog = querylog
+		self.cache = cache
 		self.gate = gate if gate is not None else opsec.OpsecGate()
 		self.keepalive = keepalive
 
@@ -32,6 +33,11 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		finally:
 			self.gate.end_command()
 			hooks.set_foreground(None)
+			if self.cache is not None:
+				try:
+					self.cache.save()
+				except OSError as e:
+					print('Could not save the cache: %s' % e)
 
 	async def do_login(self, url=None):
 		"""Performs connection and login"""
@@ -48,6 +54,58 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		task = getattr(self.connection, '_MSLDAPClient__keepalive_task', None)
 		if task is not None:
 			task.cancel()
+
+	async def do_cache(self, action=None, value=None):
+		"""Shows or controls the query cache.
+
+		cache                  state, size, hits/misses and the cache file
+		cache list             cached queries with age and number of results
+		cache flush [text]     drops all cached queries and the DN index, or only the queries
+		                       whose base DN or filter contains text
+		cache ttl <seconds>    how long results are reused (default 1800)
+		cache on | off         answer repeated searches from the cache or always ask the server
+
+		Repeated searches within the TTL are answered from the cache without contacting the
+		server; opsec show marks them with [cache]. Background queries (keepalive), searches
+		stopped early and failed ones are not cached; add/modify/delete drop the cached queries.
+		The cache is kept per server and account in ./msldap-ops-cache/.
+		"""
+		if self.cache is None:
+			print('The cache is not available (started with --no-cache)')
+			return True
+		action = (action or '').lower()
+		if action == 'flush':
+			dropped = self.cache.flush(value)
+			print('Dropped %d cached %s%s' % (dropped, 'query' if dropped == 1 else 'queries', '' if value else ' and the DN index'))
+			return True
+		if action == 'ttl':
+			try:
+				self.cache.ttl = int(value)
+			except (TypeError, ValueError):
+				print('Usage: cache ttl <seconds>')
+				return False
+			self.cache.expire()
+		elif action in ('on', 'off'):
+			self.cache.enabled = action == 'on'
+		elif action == 'list':
+			rows = [['age', 'results', 'base', 'filter']] + [['%ds' % a, str(n), b, f] for a, n, b, f in self.cache.list_queries()]
+			for line in privileged.table(rows, 2):
+				print(line)
+			return True
+		elif action:
+			print("Unknown action '%s', see 'help cache'" % action)
+			return False
+		stats = self.cache.stats()
+		print('Query cache: %s, ttl %ds' % ('on' if self.cache.enabled else 'off', self.cache.ttl))
+		print('  %d queries (%d results), %d DNs known, %d hits / %d misses this session' % (
+			stats['queries'], stats['entries'], stats['dns'], stats['hits'], stats['misses']))
+		if stats['oldest']:
+			print('  oldest entry from %s' % stats['oldest'])
+		print('  file: %s' % (self.cache.path or '(not bound yet, log in first)' if self.cache.persist else 'not persisted'))
+		return True
+
+	def _cache_completions(self):
+		return WordCompleter(['list', 'flush', 'ttl', 'on', 'off'])
 
 	async def do_opsec(self, mode=None):
 		"""Shows or sets the opsec mode for LDAP searches.

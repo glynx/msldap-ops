@@ -65,7 +65,7 @@ ESSOS_URL="$(mkurl ESSOS "$ESSOS_LOWPRIV_USER" "$ESSOS_LOWPRIV_PASS" "$ESSOS_DC"
 ops() { # ops <outfile> <commands...>
   local out="$1"
   shift
-  "$OPS" --log-dir "$LOGS" "$URL" "$@" >"$RESULTS/$out" 2>&1 || true
+  "$OPS" --no-cache --log-dir "$LOGS" "$URL" "$@" >"$RESULTS/$out" 2>&1 || true
 }
 
 PASS=0
@@ -121,7 +121,7 @@ check_cmd "log off stops logging" test "$BEFORE" -eq "$AFTER"
 
 echo
 echo "== privileged accounts (find_admins)"
-"$OPS" --no-log "$URL" login find_admins >"$RESULTS/admins-north.txt" 2>&1 || true
+"$OPS" --no-cache --no-log "$URL" login find_admins >"$RESULTS/admins-north.txt" 2>&1 || true
 check "Domain Admins found by SID" '^  [^ ].* \(S-1-5-21-[0-9-]+-512\): [1-9][0-9]* accounts?$' "$RESULTS/admins-north.txt"
 check "eddard.stark is a privileged account" '^  eddard\.stark +user ' "$RESULTS/admins-north.txt"
 check "Enterprise Admins explained on the child domain" 'Enterprise Admins \(S-1-5-21-[0-9-]+-519\): lives in the forest root' "$RESULTS/admins-north.txt"
@@ -129,7 +129,7 @@ check "Administrators lists the forest root group as other-domain member" '\(oth
 check "report completes" '^adminCount=1 users outside the privileged groups: [0-9]+$' "$RESULTS/admins-north.txt"
 check_cmd "no error section" bash -c "! grep -q '^Errors:' '$RESULTS/admins-north.txt'"
 
-"$OPS" --no-log "$ROOT_URL" login find_admins >"$RESULTS/admins-root.txt" 2>&1 || true
+"$OPS" --no-cache --no-log "$ROOT_URL" login find_admins >"$RESULTS/admins-root.txt" 2>&1 || true
 check "Enterprise Admins listed on the forest root" '^  [^ ].* \(S-1-5-21-[0-9-]+-519\): [1-9][0-9]* accounts?$' "$RESULTS/admins-root.txt"
 check "Schema Admins listed on the forest root" '^  [^ ].* \(S-1-5-21-[0-9-]+-518\): [0-9]+ accounts?$' "$RESULTS/admins-root.txt"
 check "name search runs" "^Name or description contains 'adm', outside the privileged groups: [0-9]+$" "$RESULTS/admins-north.txt"
@@ -138,12 +138,12 @@ echo "   INFO  findings on north: $(grep -oE '(kerberoastable|asrep-roastable|pa
 
 echo
 echo "== certificate templates"
-"$OPS" --no-log --opsec show "$URL" login templates "templates User" >"$RESULTS/templates-north.txt" 2>&1 || true
+"$OPS" --no-cache --no-log --opsec show "$URL" login templates "templates User" >"$RESULTS/templates-north.txt" 2>&1 || true
 check "table of templates" '^  Name +CAs +Client Auth +Enrollee Subject +Approval +Vulnerabilities$' "$RESULTS/templates-north.txt"
 check "checked for the bound user" "^Vulnerabilities checked for NORTH\\\\$LOWPRIV_USER\\." "$RESULTS/templates-north.txt"
 check "User template flags decoded one per line" '^  Certificate Name Flag +: SUBJECT_ALT_REQUIRE_UPN$' "$RESULTS/templates-north.txt"
 check "template table needs 4 searches" '^\[opsec\] templates: 4 LDAP queries issued$' "$RESULTS/templates-north.txt"
-"$OPS" --no-log "$ESSOS_URL" login "templates vulnerable" >"$RESULTS/templates-essos.txt" 2>&1 || true
+"$OPS" --no-cache --no-log "$ESSOS_URL" login "templates vulnerable" >"$RESULTS/templates-essos.txt" 2>&1 || true
 check "essos: ESC1 template marked" '^  Enrollee Supplies Subject +: True \[!\]$' "$RESULTS/templates-essos.txt"
 check "essos: ESC1 reported for $ESSOS_LOWPRIV_USER" "^  \\[!\\] Vulnerabilities for ESSOS\\\\$ESSOS_LOWPRIV_USER" "$RESULTS/templates-essos.txt"
 check "essos: ESC1 finding" '^    ESC1 +: ' "$RESULTS/templates-essos.txt"
@@ -152,17 +152,31 @@ echo "   INFO  essos findings: $(grep -oE '^    ESC[0-9]+' "$RESULTS/templates-e
 
 echo
 echo "== opsec"
-"$OPS" --no-log --opsec show "$URL" login find_admins >"$RESULTS/opsec-show.txt" 2>&1 || true
+"$OPS" --no-cache --no-log --opsec show "$URL" login find_admins >"$RESULTS/opsec-show.txt" 2>&1 || true
 check "show prints the queries before they are sent" '^\[ldap #1\] DC=' "$RESULTS/opsec-show.txt"
 check "show reports the number of queries per command" '^\[opsec\] find_admins: [0-9]+ LDAP quer(y|ies) issued$' "$RESULTS/opsec-show.txt"
 echo "   INFO  $(grep -E '^\[opsec\] (login|find_admins):' "$RESULTS/opsec-show.txt" | tr '\n' ';')"
-"$OPS" --no-log --opsec show "$URL" login "cd CN=Computers" >"$RESULTS/opsec-cd.txt" 2>&1 || true
+"$OPS" --no-cache --no-log --opsec show "$URL" login "cd CN=Computers" >"$RESULTS/opsec-cd.txt" 2>&1 || true
 check "cd shows its query" '^\[ldap #1\] CN=Computers,DC=' "$RESULTS/opsec-cd.txt"
 check_cmd "cd sends a single query (msldap get_tree_plot fix)" bash -c "! grep -qE '^\[ldap #2\] CN=[^,]+,CN=Computers,' '$RESULTS/opsec-cd.txt'"
-"$OPS" --no-log "$URL" login "opsec dryrun" "bofhound_collect all" >"$RESULTS/opsec-dryrun.txt" 2>&1 || true
+"$OPS" --no-cache --no-log "$URL" login "opsec dryrun" "bofhound_collect all" >"$RESULTS/opsec-dryrun.txt" 2>&1 || true
 check "dryrun shows the queries" '^\[dryrun #1\] ' "$RESULTS/opsec-dryrun.txt"
 check "dryrun sends nothing" '^0 objects from [0-9]+ queries, 0 failed$' "$RESULTS/opsec-dryrun.txt"
 check "dryrun summary" '^\[opsec\] bofhound_collect: [0-9]+ LDAP queries shown, none sent$' "$RESULTS/opsec-dryrun.txt"
+
+echo
+echo "== query cache"
+CACHE_ARGS=(--no-log --cache-dir "$RESULTS/cache" --opsec show)
+"$OPS" "${CACHE_ARGS[@]}" "$URL" login find_admins find_admins cache >"$RESULTS/cache-1.txt" 2>&1 || true
+check "second find_admins is answered from the cache" '^\[cache\] ' "$RESULTS/cache-1.txt"
+check_cmd "find_admins sends its queries only once" test "$(grep -c '^\[opsec\] find_admins:' "$RESULTS/cache-1.txt")" -eq 1
+check "cache command shows hits" '^  [0-9]+ queries \([0-9]+ results\), [0-9]+ DNs known, [1-9][0-9]* hits' "$RESULTS/cache-1.txt"
+check_cmd "cache file written" bash -c "ls '$RESULTS/cache/'*.json >/dev/null 2>&1"
+"$OPS" "${CACHE_ARGS[@]}" "$URL" login find_admins >"$RESULTS/cache-2.txt" 2>&1 || true
+check_cmd "a new session reuses the persisted cache" bash -c "! grep -q '^\[opsec\] find_admins:' '$RESULTS/cache-2.txt' && grep -q '^\[cache\] ' '$RESULTS/cache-2.txt'"
+"$OPS" "${CACHE_ARGS[@]}" "$URL" login "cache flush" find_admins >"$RESULTS/cache-3.txt" 2>&1 || true
+check "flush empties the cache" '^Dropped [0-9]+ cached quer(y|ies) and the DN index$' "$RESULTS/cache-3.txt"
+check "after a flush the queries are sent again" '^\[opsec\] find_admins: [0-9]+ LDAP quer(y|ies) issued$' "$RESULTS/cache-3.txt"
 
 echo
 echo "== bofhound import"

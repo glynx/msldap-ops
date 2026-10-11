@@ -80,6 +80,13 @@ class OpsecGate:
 				'shown, none sent' if self.mode == 'dryrun' else 'issued'))
 		self.command = None
 
+	def cached(self, query):
+		"""A search answered from the cache: shown in show/confirm/dryrun, nothing is sent."""
+		if self.mode == 'off' or query.background:
+			return
+		for line in format_query(query, '[cache]'):
+			self.out(line)
+
 	async def __call__(self, query):
 		if self.mode == 'off' or query.background:
 			# background queries (keepalive) cannot be confirmed and would interrupt the prompt

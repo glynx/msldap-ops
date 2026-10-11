@@ -144,8 +144,9 @@ class QueryLog:
 				f.write(text)
 
 	def query_entry(self, query, entry):
-		# background queries (keepalive) return the same domain object over and over
-		if not self.enabled or query.background:
+		# background queries (keepalive) return the same domain object over and over; cached
+		# results were logged when they were fetched
+		if not self.enabled or query.background or query.cached:
 			return
 		raw = getattr(entry, 'raw', None)
 		if raw is None or not is_identifiable(raw):
@@ -158,7 +159,7 @@ class QueryLog:
 		if not self.enabled:
 			return
 		logged = getattr(query, 'logged', 0)
-		if not query.background and not query.skipped:
+		if not query.background and not query.skipped and not query.cached:
 			self._write('records', 'Retrieved %d results total\n' % logged)
 		record = query.to_dict()
 		record['logged'] = logged
