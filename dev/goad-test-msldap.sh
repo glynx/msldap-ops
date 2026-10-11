@@ -150,6 +150,16 @@ check() { # check <description> <pattern> <file>
   fi
 }
 
+check_absent() { # check_absent <description> <pattern> <file>
+  if [[ -s "$3" ]] && ! grep -qE "$2" "$3"; then
+    echo "   PASS  $1"
+    PASS=$((PASS + 1))
+  else
+    echo "   FAIL  $1 (see $(basename "$3"))"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
 USERS_DN="CN=Users,DC=north,DC=sevenkingdoms,DC=local"
 
 # --- fix branch ----------------------------------------------------------------
@@ -172,6 +182,16 @@ check "nTSecurityDescriptor readable as low-priv user (SD flags control)" '^  nT
 
 msldap_cli "$PY" cli-query-badscope.txt "$LOW_URL" login "query (cn=x) cn - bogus"
 check "invalid scope is rejected" 'Unknown scope' "$RESULTS/cli-query-badscope.txt"
+
+echo
+echo "== CLI smoke tests (SID resolution)"
+msldap_cli "$PY" cli-certtemplates.txt "$LOW_URL" login certtemplates
+check "certtemplates resolves forest root principals" 'SEVENKINGDOMS\\Enterprise Admins' "$RESULTS/cli-certtemplates.txt"
+check_absent "certtemplates has no unresolved SIDs" '\?\?\?\\\?\?\?' "$RESULTS/cli-certtemplates.txt"
+
+msldap_cli "$PY" cli-whoami.txt "$LOW_URL" login whoami
+check "whoami resolves builtin aliases" 'S-1-5-32-555 \(BUILTIN\\Remote Desktop Users\)' "$RESULTS/cli-whoami.txt"
+check_absent "whoami has no unresolved SIDs" '\?\?\?\\\?\?\?' "$RESULTS/cli-whoami.txt"
 
 # --- optional baseline -----------------------------------------------------------
 if [[ $COMPARE -eq 1 ]]; then
