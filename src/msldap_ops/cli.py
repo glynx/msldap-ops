@@ -21,6 +21,8 @@ async def amain(args):
 		hooks.add_listener(querylog)
 	gate = OpsecGate(args.opsec)
 	hooks.set_gate(gate)
+	# from here on the console tracks which task runs a command
+	hooks.set_foreground(None)
 	console = MSLDAPOpsConsole(args.url, querylog=querylog, gate=gate, keepalive=args.keepalive)
 	if len(args.commands) == 0:
 		res = await console._run_single_command('login', [])

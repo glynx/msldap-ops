@@ -33,7 +33,7 @@ def make_gate(mode, *answers):
 def gated(patched):
 	yield
 	hooks.set_gate(None)
-	hooks.set_foreground(None)
+	hooks.set_foreground(hooks.UNMANAGED)
 
 
 async def search(flt='(objectClass=user)'):
@@ -107,6 +107,14 @@ async def test_background_queries_are_not_gated_or_logged(gated, tmp_path):
 	assert not (tmp_path / querylog.path.split('/')[-1]).exists()
 
 
+async def test_queries_between_commands_are_background(gated):
+	# e.g. the keepalive firing while the prompt waits for input
+	gate, out = make_gate('confirm')  # no answers: asking would fail
+	hooks.set_foreground(None)
+	assert len(await search('(distinguishedName=DC=north)')) == 1
+	assert out == []
+
+
 def test_format_query_hides_the_paged_control():
 	q = hooks.QueryInfo('dc', 'DC=x', '(a=b)', [], 0, [{'controlType': b'1.2.840.113556.1.4.319'}, {'controlType': b'1.2.840.113556.1.4.801'}])
 	assert format_query(q)[2].endswith('attributes: (all)  controls: sd-flags')
@@ -119,6 +127,6 @@ async def test_console_marks_commands_and_switches_modes(gated, capsys):
 	console = MSLDAPOpsConsole(None, gate=gate)
 	assert await console._run_single_command('opsec', ['show']) is True
 	assert gate.mode == 'show'
-	assert hooks._foreground is None  # reset after the command
+	assert hooks._foreground is None  # no command running anymore
 	assert await console._run_single_command('opsec', ['bogus']) is False
 	assert 'opsec mode: show' in capsys.readouterr().out

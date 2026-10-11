@@ -35,7 +35,11 @@ SCOPE_NAMES = {0: 'base', 1: 'one', 2: 'sub'}
 _listeners = []
 _originals = {}
 _gate = None
-_foreground = None
+# UNMANAGED: no shell is tracking commands, every query counts as foreground.
+# Otherwise the task of the running command, or None between commands (then every query,
+# e.g. msldap's keepalive, is background).
+UNMANAGED = object()
+_foreground = UNMANAGED
 
 SEND = 'send'
 SKIP = 'skip'
@@ -102,8 +106,10 @@ def _server_name(connection):
 
 
 def _is_background():
-	if _foreground is None:
+	if _foreground is UNMANAGED:
 		return False
+	if _foreground is None:
+		return True
 	try:
 		return asyncio.current_task() is not _foreground
 	except RuntimeError:
@@ -111,7 +117,8 @@ def _is_background():
 
 
 def set_foreground(task):
-	"""Marks the task of the command currently running; queries from other tasks are background."""
+	"""Marks the task of the command currently running (None: no command is running); queries
+	from other tasks are background. UNMANAGED switches the tracking off."""
 	global _foreground
 	_foreground = task
 

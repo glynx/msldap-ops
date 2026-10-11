@@ -34,6 +34,9 @@
 
 - [ ] Cache of all DNs seen so far (optionally persisted per target)
 - [ ] `cd` completion from the cache instead of only the current level
+- [ ] `cd ..` above the naming context of the DC (e.g. from DC=north,... to DC=sevenkingdoms,...)
+      fails with a raw "referral" error; explain it and offer the naming contexts of the DC instead
+      (msldap also splits the DN at the first comma, escaped commas break `cd ..`)
 - [ ] `map` command: tree of the visited structure, optionally as a toolbar below the prompt
 
 ## ADCS
