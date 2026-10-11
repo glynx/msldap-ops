@@ -1,0 +1,45 @@
+# TODO
+
+## Core
+
+- [ ] Monkeypatch hook on `msldap.connection.convert_result` to see every raw search result
+      (shared by logging and the DN cache)
+- [ ] Query logging in pyldapsearch/bofhound format, written to the current working directory
+      (`./msldap-ops-logs/`), verified against the bofhound parser
+- [ ] SD flags control by default when `nTSecurityDescriptor` is requested
+
+## Presets
+
+- [ ] bofhound collection split per object type: users, computers, groups, domain, OUs,
+      containers, GPOs, trusts, schema (`schemaIDGUID`), ADCS (Configuration NC)
+- [ ] Privileged accounts: `adminCount=1`, recursive members of the protected groups via
+      `LDAP_MATCHING_RULE_IN_CHAIN`, groups resolved by RID/SID (localized names, e.g. "Domänen-Admins")
+- [ ] Admins with SPN, admins not in Protected Users / not "sensitive", admins with
+      `PASSWORD_NEVER_EXPIRES`
+
+## Navigation
+
+- [ ] Cache of all DNs seen so far (optionally persisted per target)
+- [ ] `cd` completion from the cache instead of only the current level
+- [ ] `map` command: tree of the visited structure, optionally as a toolbar below the prompt
+
+## ADCS
+
+- [ ] Template output like certipy: decoded `msPKI-Certificate-Name-Flag`, `msPKI-Enrollment-Flag`,
+      `msPKI-Private-Key-Flag`, EKUs, with the security relevant bits highlighted
+      (ENROLLEE_SUPPLIES_SUBJECT, NO_SECURITY_EXTENSION, PEND_ALL_REQUESTS, ...)
+- [ ] Cross-domain / cross-forest checks (`adcs-check [DOMAIN\user]`): take the token groups from
+      the user's own domain and map them to foreign security principals in the target forest,
+      so that e.g. NORTH\jon.snow can be checked against the ESSOS CA. Same-forest users of
+      other domains via the Global Catalog or a second connection.
+
+## UX
+
+- [ ] Clearly separate prompt and command output; colored, structured output with
+      [rich](https://github.com/Textualize/rich) (tables, trees, highlighting) on top of the
+      prompt_toolkit based shell inherited from msldap
+- [ ] Better command descriptions (parameters, allowed values) for the msldap-ops commands
+
+## Release
+
+- [ ] Remove the `[tool.uv.sources]` path override once glynx/msldap `main` is pushed
