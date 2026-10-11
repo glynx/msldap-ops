@@ -18,6 +18,7 @@
 #   ROOT_USER / ROOT_PASS                        live suite (defaults: GOAD domain admins that may use NTLM;
 #   ESSOS_USER / ESSOS_PASS                      robert.baratheon is in Protected Users)
 #   LOWPRIV_USER / LOWPRIV_PASS                  unprivileged NORTH account for the CLI tests
+#   ESSOS_LOWPRIV_USER / ESSOS_LOWPRIV_PASS      unprivileged ESSOS account (ADCS checks against ESSOS-CA)
 #
 # Results end up in dev/results/<timestamp>/ (git-ignored).
 set -euo pipefail
@@ -41,6 +42,8 @@ ESSOS_USER="${ESSOS_USER:-daenerys.targaryen}"
 ESSOS_PASS="${ESSOS_PASS:-BurnThemAll!}"
 LOWPRIV_USER="${LOWPRIV_USER:-samwell.tarly}"
 LOWPRIV_PASS="${LOWPRIV_PASS:-Heartsbane}"
+ESSOS_LOWPRIV_USER="${ESSOS_LOWPRIV_USER:-khal.drogo}"
+ESSOS_LOWPRIV_PASS="${ESSOS_LOWPRIV_PASS:-horse}"
 
 COMPARE=0
 [[ "${1:-}" == "--compare" ]] && COMPARE=1
@@ -193,6 +196,15 @@ msldap_cli "$PY" cli-whoami.txt "$LOW_URL" login whoami
 check "whoami resolves builtin aliases" 'S-1-5-32-555 \(BUILTIN\\Remote Desktop Users\)' "$RESULTS/cli-whoami.txt"
 check_absent "whoami has no unresolved SIDs" '\?\?\?\\\?\?\?' "$RESULTS/cli-whoami.txt"
 
+echo
+echo "== CLI smoke tests (certify2)"
+msldap_cli "$PY" cli-certify2-north.txt "$LOW_URL" login certify2
+check "certify2 reports a result on north (vulns or explicit none)" '^(Template Name:|No vulnerable templates found)' "$RESULTS/cli-certify2-north.txt"
+
+ESSOS_LOW_URL="$(mkurl "$PY" ESSOS "$ESSOS_LOWPRIV_USER" "$ESSOS_LOWPRIV_PASS" "$ESSOS_DC")"
+msldap_cli "$PY" cli-certify2-essos.txt "$ESSOS_LOW_URL" login certify2
+check "certify2 finds ESC1 on essos" 'ESC1 - ' "$RESULTS/cli-certify2-essos.txt"
+
 # --- optional baseline -----------------------------------------------------------
 if [[ $COMPARE -eq 1 ]]; then
   BWT="$(prepare_checkout base "$BASE_BRANCH")"
@@ -207,6 +219,9 @@ if [[ $COMPARE -eq 1 ]]; then
   else
     echo "   INFO  baseline returns no nTSecurityDescriptor to the low-priv user"
   fi
+  msldap_cli "$BPY" cli-base-certify2-essos.txt "$ESSOS_LOW_URL" login certify2
+  echo "   INFO  baseline certify2 on essos finds: $(grep -oE '^\s+ESC[0-9]+' "$RESULTS/cli-base-certify2-essos.txt" | sort -u | tr -d '\t ' | tr '\n' ' ')"
+  echo "   INFO  fix branch certify2 on essos finds: $(grep -oE '^\s+ESC[0-9]+' "$RESULTS/cli-certify2-essos.txt" | sort -u | tr -d '\t ' | tr '\n' ' ')"
 fi
 
 # --- summary ---------------------------------------------------------------------
