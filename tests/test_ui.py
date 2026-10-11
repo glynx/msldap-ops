@@ -54,7 +54,7 @@ def test_records_are_separated_on_the_terminal(color):
 	header = strip_ansi(ui.render('Template ESC1')).split('\n')
 	assert header[0].startswith('\u2500') and header[1] == 'Template ESC1'
 	assert ('DN: CN=jon.snow,DC=x', 'bold cyan') in spans('DN: CN=jon.snow,DC=x')
-	assert ('  sAMAccountName', 'blue') in spans('  sAMAccountName: jon.snow')
+	assert ('  sAMAccountName:', 'blue') in spans('  sAMAccountName: jon.snow')
 	# the templates details use ' : ', those keys stay plain
 	assert spans('  Template Name                   : ESC1') == []
 

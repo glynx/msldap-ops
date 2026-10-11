@@ -42,7 +42,8 @@ RULES = [
 	# records of msldap's query command
 	(r'^DN: .*$', 'bold cyan'),
 	(r'^Attributes:$', 'bright_black'),
-	(r'^  [A-Za-z][\w;-]*(?=:( |$))', 'blue'),
+	(r'^  [A-Za-z][\w;-]*:(?= |$)', 'blue'),
+	(r'^\(\d+ objects?\)$', 'bright_black'),
 	(r'^    - ', 'bright_black'),
 ]
 # lines that end a record (msldap's query prints '---') and lines that start one

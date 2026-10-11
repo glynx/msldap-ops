@@ -137,6 +137,8 @@ cd ..                    parent DN (refused above the naming context of the DC, 
 cd ../..                 two levels up
 cd CN=Computers          relative to the current DN, also deeper: OU=Servers,OU=Tier0
 cd <DN>                  absolute, any naming context of the DC (e.g. CN=Configuration,...)
+cat [attributes] [path]  attributes of the current object or of a DN/path
+query <filter> [attributes] [base|path] [base|one|sub]
 map [DN|path] [depth]    tree of the DNs seen so far below a DN (default: current, 3 levels)
 tree [DN] [level]        msldap's tree: queried live from the DC
 ```
@@ -198,8 +200,10 @@ queries are not shown or confirmed and not written to the bofhound log, only to 
 ## Output
 
 The prompt (`msldap-ops <DN> >`) is colored so that it stands out from the command output. All output,
-including the msldap built-in commands, keeps its plain text layout and gets colors on top: records
-of `query` are separated by a line, their DN and attribute names are colored, findings and `[!]`
+including the msldap built-in commands, keeps its plain text layout and gets colors on top. `query`
+and `cat` show every object with a separator line, its DN and aligned attribute names, values of
+multi-valued attributes below each other (`query` ends with the number of objects); DN and attribute
+names are colored, findings and `[!]`
 marks are red, `delegable` yellow, the queries shown by `opsec` gray. Without a terminal (pipes,
 files) the output is plain text; `--no-color` or the `NO_COLOR` environment variable switch colors
 off.

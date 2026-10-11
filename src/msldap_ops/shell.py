@@ -6,13 +6,13 @@ import signal
 import sys
 
 from msldap.examples.msldapclient import MSLDAPClientConsole
-from msldap.protocol.constants import SUBTREE
+from msldap.protocol.constants import BASE, LEVEL, SUBTREE
 from msldap.wintypes.asn1.sdflagsrequest import SDFlagsRequest, SDFlagsRequestValue
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.patch_stdout import patch_stdout
 
-from msldap_ops import hooks, navigation, opsec, presets, privileged, templates, ui
+from msldap_ops import hooks, navigation, opsec, presets, privileged, records, templates, ui
 
 
 def split_redirect(args):
@@ -473,3 +473,66 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 
 	def _map_completions(self):
 		return self._cd_completions()
+
+	# --- objects --------------------------------------------------------------
+	async def do_query(self, query, attributes='*', tree=None, scope='sub'):
+		"""Raw LDAP search.
+
+		query <filter> [attributes] [base] [scope]
+		  attributes  comma separated, default *; nTSecurityDescriptor is requested with the
+		              SD flags control, so unprivileged users get owner, group and DACL
+		  base        DN or path relative to the current DN (as for cd), default: domain root;
+		              '-' for the default
+		  scope       base | one | sub (default)
+
+		Every object starts with a separator line and its DN, multi-valued attributes are listed
+		below each other; the number of objects is shown at the end.
+		"""
+		if self.connection is None:
+			print('Not connected, run login first')
+			return False
+		attrs = [a.strip() for a in (attributes or '*').split(',') if a.strip()] or ['*']
+		scopes = {'base': BASE, 'one': LEVEL, 'sub': SUBTREE, '0': BASE, '1': LEVEL, '2': SUBTREE}
+		if str(scope).lower() not in scopes:
+			print('Unknown scope "%s", use base, one or sub' % scope)
+			return False
+		base = None
+		if tree not in (None, '', '-'):
+			try:
+				base = navigation.resolve(tree, self._current_dn, self._naming_contexts())
+			except ValueError as e:
+				print(e)
+				return False
+		return await self._print_objects(query, attrs, base, scopes[str(scope).lower()])
+
+	async def do_cat(self, attributes='*', dn=''):
+		"""Attributes of one object (default: the current DN).
+
+		cat [attributes] [DN|path]   attributes comma separated (default *), the object as DN or
+		                             path relative to the current DN (as for cd)
+		"""
+		if self.connection is None:
+			print('Not connected, run login first')
+			return False
+		target = self._current_dn
+		if dn:
+			try:
+				target = navigation.resolve(dn, self._current_dn, self._naming_contexts())
+			except ValueError as e:
+				print(e)
+				return False
+		attrs = [a.strip() for a in (attributes or '*').split(',') if a.strip()] or ['*']
+		return await self._print_objects('(objectClass=*)', attrs, target, BASE, count=False)
+
+	async def _print_objects(self, query, attrs, base, scope, count=True):
+		controls = [sd_flags_control()] if any(a.lower() == 'ntsecuritydescriptor' for a in attrs) else None
+		n = 0
+		async for entry, err in self.connection.pagedsearch(query, attrs, controls=controls, tree=base, search_scope=scope):
+			if err is not None:
+				print('Search failed: %s' % err)
+				return False
+			n += 1
+			ui.emit(records.record_lines(entry['objectName'], entry['attributes']))
+		if count:
+			ui.out(records.count_line(n))
+		return True
