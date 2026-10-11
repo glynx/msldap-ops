@@ -36,7 +36,7 @@ def test_default_path_follows_xdg(monkeypatch, tmp_path):
 
 
 def test_unique_recent():
-	assert history.unique_recent(['ls', 'cd ..', 'ls', 'cat']) == ['ls', 'cd ..', 'cat']
+	assert history.unique_recent(['ls', 'cd ..', 'ls', 'cat', ' ls ', '']) == ['ls', 'cd ..', 'cat']
 
 
 def test_fzf_select(monkeypatch, tmp_path):
@@ -53,3 +53,14 @@ def test_fzf_select(monkeypatch, tmp_path):
 	fake.write_text('#!/bin/sh\nexit 130\n')
 	assert history.fzf_select(['x']) is None
 
+
+
+def test_history_shows_each_command_once(tmp_path):
+	path = str(tmp_path / 'history')
+	h = history.PrivateFileHistory(path)
+	for line in ['ls', 'find_admins', 'ls', 'cat  *', 'cat *']:
+		h.append_string(line)
+	# newest occurrence wins, whitespace variants are one command
+	assert h.get_strings() == ['find_admins', 'ls', 'cat *']
+	# the file keeps every execution, loading it shows each command once
+	assert list(history.PrivateFileHistory(path).load_history_strings()) == ['cat *', 'ls', 'find_admins']

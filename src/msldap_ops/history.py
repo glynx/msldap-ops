@@ -49,18 +49,32 @@ class PrivateFileHistory(FileHistory):
 			os.close(os.open(filename, os.O_WRONLY | os.O_CREAT, 0o600))
 		super().__init__(filename)
 
+	def load_history_strings(self):
+		# the file keeps every execution, the history shows each command once (newest first)
+		return unique_recent(super().load_history_strings())
+
+	def append_string(self, string):
+		# a repeated command moves to the top instead of appearing twice
+		self._loaded_strings = [s for s in self._loaded_strings if _key(s) != _key(string)]
+		super().append_string(string)
+
 	def store_string(self, string):
 		if is_sensitive(string):
 			return
 		super().store_string(string)
 
 
+def _key(string):
+	"""Commands that differ only in whitespace are the same."""
+	return ' '.join(string.split())
+
+
 def unique_recent(strings):
 	"""History entries newest first, without duplicates."""
 	seen, result = set(), []
 	for s in strings:
-		if s not in seen:
-			seen.add(s)
+		if _key(s) and _key(s) not in seen:
+			seen.add(_key(s))
 			result.append(s)
 	return result
 
