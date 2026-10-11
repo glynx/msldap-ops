@@ -45,7 +45,7 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 	def _log_completions(self):
 		return WordCompleter(['on', 'off'])
 
-	async def do_collect(self, names=None, delay='0'):
+	async def do_bofhound_collect(self, names=None, delay='0'):
 		"""Collects data for bofhound, split into one query per object type.
 
 		names: comma separated presets, e.g. 'users,groups', or 'all'.
@@ -107,14 +107,14 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		return count, None
 
 	def _print_presets(self):
-		print('Presets (collect <name>[,<name>...] [delay]):')
+		print('Presets (bofhound_collect <name>[,<name>...] [delay]):')
 		for name, (description, queries) in presets.PRESETS.items():
 			marker = '' if name in presets.ALL else '  (not in all)'
 			print('  %-11s %s%s' % (name, description, marker))
 			for q in queries:
 				print('  %-11s   %s  base=%s  attributes=%s' % ('', q.filter, q.base, ','.join(q.attributes)))
 
-	def _collect_completions(self):
+	def _bofhound_collect_completions(self):
 		return WordCompleter(['all'] + list(presets.PRESETS))
 
 	async def do_admins(self):

@@ -61,15 +61,15 @@ control, so unprivileged users get the owner, group and DACL as well.
 
 ## Collecting data for bofhound
 
-`collect` runs one query per object type, with `*,nTSecurityDescriptor` and the SD flags control.
+`bofhound_collect` runs one query per object type, with `*,nTSecurityDescriptor` and the SD flags control.
 The results are not printed, they go to the query log.
 
 ```text
-collect                     list the presets and their queries
-collect all                 everything except DNS
-collect users,groups        selected presets
-collect all 5               wait 5 seconds between queries
-collect dns                 DNS nodes (computer IP addresses), not part of 'all'
+bofhound_collect                 list the presets and their queries
+bofhound_collect all             everything except DNS
+bofhound_collect users,groups    selected presets
+bofhound_collect all 5           wait 5 seconds between queries
+bofhound_collect dns             DNS nodes (computer IP addresses), not part of 'all'
 ```
 
 bofhound evaluates DNS nodes since version 0.4.21; older versions list them as unknown objects.
@@ -80,7 +80,7 @@ templates, issuance policies), `partitions` (NetBIOS names) and `dns`. Base DNs 
 RootDSE, so Configuration and Schema are found on child domain DCs as well.
 
 The presets cover the domain the DC belongs to. For other domains of the forest or trusted forests,
-connect to one of their DCs and run `collect` again.
+connect to one of their DCs and run `bofhound_collect` again.
 
 ## Privileged accounts
 

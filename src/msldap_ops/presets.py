@@ -103,7 +103,7 @@ PRESETS = {
 	),
 }
 
-# what 'collect all' runs; dns is left out because it can be large
+# what 'bofhound_collect all' runs; dns is left out because it can be large
 ALL = ['domain', 'users', 'computers', 'groups', 'ous', 'containers', 'gpos', 'trusts', 'fsps', 'schema', 'adcs', 'partitions']
 
 

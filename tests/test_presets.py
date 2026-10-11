@@ -70,10 +70,10 @@ class FakeClient:
 			yield {'objectName': 'CN=%d' % i, 'attributes': {}}, None
 
 
-async def test_collect_runs_every_query_and_continues_after_errors(capsys, tmp_path):
+async def test_bofhound_collect_runs_every_query_and_continues_after_errors(capsys, tmp_path):
 	console = MSLDAPOpsConsole(None, querylog=QueryLog(str(tmp_path)))
 	console.connection = FakeClient(fail=('(objectClass=trustedDomain)',))
-	assert await console.do_collect('users,trusts,schema') is True
+	assert await console.do_bofhound_collect('users,trusts,schema') is True
 
 	calls = console.connection.calls
 	assert [c[0] for c in calls] == ['(sAMAccountType=805306368)', '(objectClass=trustedDomain)', '(schemaIDGUID=*)']
@@ -86,24 +86,24 @@ async def test_collect_runs_every_query_and_continues_after_errors(capsys, tmp_p
 	assert 'WARNING' not in out
 
 
-async def test_collect_warns_when_logging_is_off(capsys):
+async def test_bofhound_collect_warns_when_logging_is_off(capsys):
 	console = MSLDAPOpsConsole(None)
 	console.connection = FakeClient()
-	await console.do_collect('users')
+	await console.do_bofhound_collect('users')
 	assert 'WARNING: query logging is off' in capsys.readouterr().out
 
 
-async def test_collect_rejects_bad_input(capsys):
+async def test_bofhound_collect_rejects_bad_input(capsys):
 	console = MSLDAPOpsConsole(None)
-	assert await console.do_collect('users') is False  # not connected
+	assert await console.do_bofhound_collect('users') is False  # not connected
 	console.connection = FakeClient()
-	assert await console.do_collect('users', 'soon') is False
-	assert await console.do_collect('bogus') is False
+	assert await console.do_bofhound_collect('users', 'soon') is False
+	assert await console.do_bofhound_collect('bogus') is False
 	assert console.connection.calls == []
 
 
-async def test_collect_without_names_lists_presets(capsys):
-	assert await MSLDAPOpsConsole(None).do_collect() is True
+async def test_bofhound_collect_without_names_lists_presets(capsys):
+	assert await MSLDAPOpsConsole(None).do_bofhound_collect() is True
 	out = capsys.readouterr().out
 	assert '(schemaIDGUID=*)' in out
 	assert '(not in all)' in out

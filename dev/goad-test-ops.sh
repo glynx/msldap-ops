@@ -81,10 +81,10 @@ check_cmd() { # check_cmd <description> <command...>
 ATTRS='*,nTSecurityDescriptor'
 
 echo
-echo "== collect presets"
-ops collect.txt login "collect all" "collect dns" "query (sAMAccountName=$LOWPRIV_USER) $ATTRS" log
-check "collect all runs without failed queries" '^[0-9]+ objects from [0-9]+ queries, 0 failed$' "$RESULTS/collect.txt"
-check "collect dns returns DNS nodes" '^  dns/DNS nodes \(domain zones\) +[1-9]' "$RESULTS/collect.txt"
+echo "== bofhound_collect presets"
+ops collect.txt login "bofhound_collect all" "bofhound_collect dns" "query (sAMAccountName=$LOWPRIV_USER) $ATTRS" log
+check "bofhound_collect all runs without failed queries" '^[0-9]+ objects from [0-9]+ queries, 0 failed$' "$RESULTS/collect.txt"
+check "bofhound_collect dns returns DNS nodes" '^  dns/DNS nodes \(domain zones\) +[1-9]' "$RESULTS/collect.txt"
 
 echo
 echo "== query logging"
