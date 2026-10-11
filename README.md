@@ -54,7 +54,7 @@ defaults match a stock GOAD install and can be overridden via environment variab
 header).
 
 ```bash
-dev/goad-test-msldap.sh             # test the fix branch
+dev/goad-test-msldap.sh             # test fork-main (upstream main + our branches)
 dev/goad-test-msldap.sh --compare   # additionally run upstream main as a baseline
 ```
 

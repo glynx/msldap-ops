@@ -10,7 +10,7 @@
 # Configuration: environment variables, or put them into dev/goad.env (git-ignored,
 # see dev/goad.env.example). Defaults match a stock GOAD install.
 #   MSLDAP_DIR      msldap checkout              (default: ../msldap next to this repo)
-#   BRANCH          branch to test               (default: fix/query-improvements)
+#   BRANCH          branch to test               (default: fork-main = upstream main + all our branches)
 #   BASE_BRANCH     baseline for --compare       (default: main)
 #   NORTH_DC / ROOT_DC / ESSOS_DC                DC addresses of north.sevenkingdoms.local,
 #                                                sevenkingdoms.local and essos.local
@@ -29,7 +29,7 @@ REPO_ROOT="$(cd "$HERE/.." && pwd)"
 [[ -f "$HERE/goad.env" ]] && source "$HERE/goad.env"
 
 MSLDAP_DIR="${MSLDAP_DIR:-$(cd "$REPO_ROOT/../msldap" && pwd)}"
-BRANCH="${BRANCH:-fix/query-improvements}"
+BRANCH="${BRANCH:-fork-main}"
 BASE_BRANCH="${BASE_BRANCH:-main}"
 NORTH_DC="${NORTH_DC:-192.168.56.11}"
 ROOT_DC="${ROOT_DC:-192.168.56.10}"
@@ -195,6 +195,12 @@ check_absent "certtemplates has no unresolved SIDs" '\?\?\?\\\?\?\?' "$RESULTS/c
 msldap_cli "$PY" cli-whoami.txt "$LOW_URL" login whoami
 check "whoami resolves builtin aliases" 'S-1-5-32-555 \(BUILTIN\\Remote Desktop Users\)' "$RESULTS/cli-whoami.txt"
 check_absent "whoami has no unresolved SIDs" '\?\?\?\\\?\?\?' "$RESULTS/cli-whoami.txt"
+
+echo
+echo "== CLI smoke tests (help)"
+msldap_cli "$PY" cli-help.txt "$LOW_URL" "help whoami" "certtemplates -h"
+check "help <command> shows usage" '^Usage: whoami' "$RESULTS/cli-help.txt"
+check "<command> -h shows usage without internal params" '^Usage: certtemplates \[name\]$' "$RESULTS/cli-help.txt"
 
 echo
 echo "== CLI smoke tests (certify2)"
