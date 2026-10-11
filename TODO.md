@@ -54,8 +54,9 @@
 
 - [ ] Delegation overview (unconstrained, constrained with/without protocol transition, RBCD), with
       a filter for single kinds
-- [ ] LAPS in both versions: legacy (`ms-Mcs-AdmPwd`) and Windows LAPS (`msLAPS-Password`,
-      `msLAPS-EncryptedPassword`, expiration), who can read it
+- [x] LAPS in both versions: legacy (`ms-Mcs-AdmPwd`) and Windows LAPS (`msLAPS-Password`); reads a
+      targeted computer or pattern, `laps all` for the whole domain. TODO: decrypt
+      `msLAPS-EncryptedPassword` via RPC (MS-GKDI), show who can read it from the ACL
 
 ## ADCS
 
@@ -81,6 +82,10 @@
 - [x] Separate records (query output) on the terminal
 - [x] Redirect a command's output to a file (`> file`, `>> file`)
 - [ ] Better command descriptions (parameters, allowed values) for the msldap-ops commands
+- [ ] Restructure the README: one section per command group (navigation, enumeration, ACLs/LAPS,
+      writing, opsec, cache, output), with the parameters and allowed values of each command
+- [ ] Group `help` into basic commands and categories (navigation, enumeration, writing, ...);
+      the flat msldap list of ~90 commands is unreadable
 
 ## Release
 

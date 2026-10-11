@@ -15,7 +15,7 @@ from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.patch_stdout import patch_stdout
 
-from msldap_ops import acl, hooks, navigation, opsec, presets, privileged, records, templates, ui
+from msldap_ops import acl, hooks, laps, navigation, opsec, presets, privileged, records, templates, ui
 from msldap_ops import history as command_history
 from msldap_ops import transcript
 
@@ -737,6 +737,46 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 
 	def _find_completions(self):
 		return WordCompleter([])
+
+	async def do_laps(self, target=None):
+		"""Reads the LAPS local administrator password of a computer (both LAPS versions).
+
+		laps <computer|pattern>  by sAMAccountName or name, '*' as wildcard (kingslanding$, *srv*)
+		laps all                 every computer with LAPS in the domain (reads many passwords!)
+		Shows the version, the password where readable (Windows LAPS encrypted blobs need an RPC
+		call to the DC), and the expiration. Reading LAPS is sensitive and privileged.
+		"""
+		if self.connection is None:
+			print('Not connected, run login first')
+			return False
+		if not target:
+			print('Usage: laps <computer|pattern>, or laps all for every computer (reads many passwords)')
+			return False
+		if target == 'all':
+			query = laps.COMPUTER_FILTER
+		else:
+			value = navigation.escape_glob(target if target.endswith('$') or '*' in target else target + '$')
+			name = navigation.escape_glob(target)
+			query = '(&%s(|(sAMAccountName=%s)(name=%s)))' % (laps.COMPUTER_FILTER, value, name)
+		base = self.connection._tree
+		entries = []
+		async for entry, err in self.connection.pagedsearch(query, laps.ATTRIBUTES, tree=base):
+			if err is not None:
+				print(records.search_error(err, base))
+				return False
+			item = laps.LapsEntry(entry)
+			if item.configured:
+				entries.append(item)
+		if not entries:
+			print('No computer with LAPS found' if target == 'all' else 'No computer with LAPS matched %r' % target)
+			return True
+		for item in sorted(entries, key=lambda e: e.name.lower()):
+			ui.emit(laps.format_entry(item))
+		ui.out(laps.summary(entries))
+		return True
+
+	def _laps_completions(self):
+		return WordCompleter(['all'])
 
 	async def do_acl(self, path='.', show='all'):
 		"""Readable ACL of one object: owner, DACL with decoded rights, object types and scope.

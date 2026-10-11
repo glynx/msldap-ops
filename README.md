@@ -196,6 +196,22 @@ names of SIDs from any cached object with `objectSid` and `sAMAccountName`. Afte
 GUIDs are named from a built-in table; others, like the LAPS attributes whose GUIDs differ per
 forest, are named if `bofhound_collect` (preset `schema`) put the schema into the cache.
 
+## LAPS
+
+`laps` reads the local administrator password managed by LAPS, both the legacy version
+(`ms-Mcs-AdmPwd`) and Windows LAPS (`msLAPS-Password`). Reading it is sensitive and privileged, so
+the command needs a target instead of dumping the whole domain by default:
+
+```text
+laps kingslanding$        one computer by sAMAccountName or name ('$' optional)
+laps *srv*                computers matching a pattern
+laps all                  every computer with LAPS (reads many passwords!)
+```
+
+For each computer it shows the LAPS version, the password where readable, and the expiration. A
+Windows LAPS encrypted password (`msLAPS-EncryptedPassword`) cannot be decrypted over LDAP alone;
+it is reported as encrypted (decryption needs an RPC call to the DC).
+
 ## Query cache
 
 Repeated searches (same base, scope, filter, attributes and controls) within the TTL are answered from
