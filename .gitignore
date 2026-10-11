@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+.pytest_cache/
+
+# GOAD test runner state and results
+dev/.work/
+dev/results/
+
+# query logs written to the working directory
+msldap-ops-logs/
