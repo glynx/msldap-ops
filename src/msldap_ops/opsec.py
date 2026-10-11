@@ -14,6 +14,10 @@ Modes:
 	one [cache] line and counted separately in the summary after each command
 	dryrun   queries are printed but not sent; commands that build queries on earlier results
 	         only show their first stage
+
+Changes (add, modify, delete; e.g. addusertogroup, setsd, changeuserpw) are shown in show, confirm
+and dryrun with DN, operation, attributes and values (passwords hidden, security descriptors as
+SDDL), are always confirmed in confirm and never sent in dryrun.
 """
 
 from msldap_ops import hooks
@@ -33,6 +37,15 @@ CONTROL_NAMES = {
 	'1.2.840.113556.1.4.1504': 'asq',
 	'1.2.840.113556.1.4.2064': 'show-recycled',
 }
+
+
+def format_write(write, prefix='[change]'):
+	"""Lines showing an add, modify or delete before it is sent."""
+	pad = ' ' * len(prefix)
+	lines = ['%s %s %s' % (prefix, write.operation, write.dn)]
+	for op, attribute, values in write.changes:
+		lines.append('%s %s %s: %s' % (pad, op, attribute, '; '.join(values) if values else '(all values)'))
+	return lines
 
 
 def format_query(query, prefix='[ldap]'):
@@ -93,7 +106,11 @@ class OpsecGate:
 		self.sent = 0
 		self.skipped = 0
 		self.aborted_at = None
+		self._kind = 'query'
 		self.cached_counter = 0
+		self.changes_shown = 0
+		self.changes_sent = 0
+		self.changes_skipped = 0
 		self.confirmable = 0  # queries shown that were not exempt as navigation
 
 	def _navigation(self, query=None):
@@ -105,17 +122,27 @@ class OpsecGate:
 
 	def summary(self):
 		"""What actually happened: sent, skipped, aborted, answered from the cache."""
-		def queries(n):
-			return '%d LDAP %s' % (n, 'query' if n == 1 else 'queries')
+		def plural(n, word, words):
+			return '%d %s' % (n, word if n == 1 else words)
 
+		queries_shown = self.counter - self.changes_shown
 		if self.mode == 'dryrun' and self.counter:
-			parts = ['%s shown, none sent' % queries(self.counter)]
+			parts = []
+			if queries_shown:
+				parts.append('%s shown' % plural(queries_shown, 'LDAP query', 'LDAP queries'))
+			if self.changes_shown:
+				parts.append('%s shown' % plural(self.changes_shown, 'change', 'changes'))
+			parts = [', '.join(parts) + ', none sent']
 		else:
-			parts = [queries(self.sent) + ' sent' if self.sent else 'no LDAP queries sent']
+			parts = [plural(self.sent, 'LDAP query', 'LDAP queries') + ' sent' if self.sent else 'no LDAP queries sent']
+			if self.changes_sent:
+				parts.append('%s sent' % plural(self.changes_sent, 'change', 'changes'))
 		if self.skipped:
 			parts.append('%d skipped' % self.skipped)
+		if self.changes_skipped and self.mode != 'dryrun':
+			parts.append('%s not sent' % plural(self.changes_skipped, 'change', 'changes'))
 		if self.aborted_at is not None:
-			parts.append('aborted at query #%d' % self.aborted_at)
+			parts.append('aborted at %s #%d' % (self._kind, self.aborted_at))
 		if self.cached_counter:
 			parts.append('%d answered from the cache' % self.cached_counter)
 		return ', '.join(parts)
@@ -141,6 +168,7 @@ class OpsecGate:
 		if self._aborted:
 			raise hooks.QueryAborted('aborted by operator')
 		self.counter += 1
+		self._kind = 'query'
 		navigation = self._navigation(query)
 		if not navigation:
 			self.confirmable += 1
@@ -152,22 +180,56 @@ class OpsecGate:
 		if self.mode == 'show' or self._send_all or navigation:
 			self.sent += 1
 			return hooks.SEND
+		decision = await self._decide()
+		if decision == hooks.SEND:
+			self.sent += 1
+		else:
+			self.skipped += 1
+		return decision
 
+	async def write(self, write):
+		"""An add/modify/delete: shown in show, confirm and dryrun, always confirmed in confirm
+		(also within navigation commands), never sent in dryrun."""
+		if self.mode == 'off':
+			return hooks.SEND
+		if self._aborted:
+			raise hooks.QueryAborted('aborted by operator')
+		self.counter += 1
+		self._kind = 'change'
+		self.changes_shown += 1
+		self.confirmable += 1
+		prefix = '[%s #%d]' % ('dryrun' if self.mode == 'dryrun' else 'change', self.counter)
+		for line in format_write(write, prefix):
+			self.out(line)
+		if self.mode == 'dryrun':
+			write.reason = 'opsec dryrun'
+			self.changes_skipped += 1
+			return hooks.SKIP
+		if self.mode == 'show' or self._send_all:
+			self.changes_sent += 1
+			return hooks.SEND
+		decision = await self._decide()
+		if decision == hooks.SEND:
+			self.changes_sent += 1
+		else:
+			write.reason = 'skipped by the operator'
+			self.changes_skipped += 1
+		return decision
+
+	async def _decide(self):
+		"""Asks the operator: SEND or SKIP, or raises QueryAborted."""
 		while True:
 			try:
 				answer = (await self.ask('send? [y]es / [n]o, skip / [a]ll for this command / [q]uit command: ')).strip().lower()
 			except (EOFError, KeyboardInterrupt):
 				answer = 'q'
 			if answer in ('y', 'yes'):
-				self.sent += 1
 				return hooks.SEND
 			if answer in ('n', 'no'):
-				self.skipped += 1
 				self.out('skipped')
 				return hooks.SKIP
 			if answer in ('a', 'all'):
 				self._send_all = True
-				self.sent += 1
 				return hooks.SEND
 			if answer in ('q', 'quit'):
 				self._aborted = True

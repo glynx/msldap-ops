@@ -164,3 +164,9 @@ class QueryLog:
 		record = query.to_dict()
 		record['logged'] = logged
 		self._write('queries', json.dumps(record) + '\n')
+
+	def write_end(self, write):
+		"""Every add/modify/delete (also skipped ones) in the journal, type 'write': a record of
+		what was changed in the directory, e.g. for the cleanup after an engagement."""
+		if self.enabled:
+			self._write('queries', json.dumps(write.to_dict()) + '\n')

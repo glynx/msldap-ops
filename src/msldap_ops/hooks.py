@@ -8,14 +8,15 @@ msldap has no callback mechanism for search results, so we patch two places:
 - ``MSLDAPClientConnection.search`` and ``MSLDAPClientConnection.pagedsearch`` are wrapped to
   report the start and end of a query together with its parameters, and every entry it returns.
 
-Listeners implement any subset of ``query_start(query)``, ``query_entry(query, entry)`` and
-``query_end(query)``. Exceptions raised by listeners are logged and never break the query.
+Listeners implement any subset of ``query_start(query)``, ``query_entry(query, entry)``,
+``query_end(query)`` and ``write_end(write)`` (add/modify/delete, see :class:`WriteInfo`). Exceptions raised by listeners are logged and never break the query.
 
 A gate (see :func:`set_gate`) is asked before a query is sent and can let it through, skip it
 (the caller gets an empty result) or abort it (the caller gets an error).
 
 A cache (see :func:`set_cache`) can answer a search from earlier results; the gate is not asked
-then, nothing is sent. add/modify/delete invalidate the cached queries.
+then, nothing is sent. add/modify/delete go through the gate as well (``gate.write(info)``) and
+invalidate the cached queries.
 
 Queries that do not run in the foreground task (see :func:`set_foreground`), e.g. msldap's
 keepalive, are marked as ``background``.
@@ -262,14 +263,115 @@ def _wrap_search(original, controls_param, passthrough=None):
 	return wrapper
 
 
+# attributes whose values are never shown or logged
+SECRET_ATTRIBUTES = {'unicodepwd', 'userpassword', 'clienttextpassword', 'ms-mcs-admpwd', 'mslaps-password',
+	'mslaps-encryptedpassword', 'mslaps-encrypteddsrmpassword', 'supplementalcredentials', 'dbcspwd', 'unicodepwdhistory'}
+MAX_VALUE = 200
+
+
+def change_value(attribute, value):
+	"""Display/log form of a value in an add or modify."""
+	from winacl.dtyp.security_descriptor import SECURITY_DESCRIPTOR
+	if attribute.lower() in SECRET_ATTRIBUTES:
+		return '<hidden>'
+	if isinstance(value, SECURITY_DESCRIPTOR):
+		return value.to_sddl()
+	if isinstance(value, bytes):
+		try:
+			if attribute.lower() in ('ntsecuritydescriptor', 'msds-allowedtoactonbehalfofotheridentity', 'msds-groupmsamembership'):
+				return SECURITY_DESCRIPTOR.from_bytes(value).to_sddl()
+		except Exception:
+			pass
+		try:
+			text = value.decode('utf-8')
+			if not text.isprintable():
+				raise ValueError
+		except ValueError:
+			text = value.hex()
+	else:
+		text = str(value)
+	if len(text) > MAX_VALUE:
+		text = '%s... (%d characters)' % (text[:MAX_VALUE], len(text))
+	return text
+
+
+class WriteInfo:
+	"""An add, modify or delete: [(operation, attribute, [values])] in changes."""
+
+	def __init__(self, server, operation, dn, changes):
+		self.server = server
+		self.operation = operation
+		self.dn = dn
+		self.changes = []
+		if operation == 'add':
+			for attribute, value in (changes or {}).items():
+				values = value if isinstance(value, (list, tuple)) else [value]
+				self.changes.append(('set', attribute, [change_value(attribute, v) for v in values]))
+		elif operation == 'modify':
+			for attribute, ops in (changes or {}).items():
+				for op, value in ops:
+					values = value if isinstance(value, (list, tuple)) else [value]
+					self.changes.append((op, attribute, [change_value(attribute, v) for v in values]))
+		self.started = datetime.datetime.now(datetime.timezone.utc)
+		self.finished = None
+		self.ok = None
+		self.error = None
+		self.skipped = False
+		self.reason = None  # why it was not sent (set by the gate)
+
+	def to_dict(self):
+		return {
+			'type': 'write',
+			'started': self.started.isoformat(),
+			'finished': self.finished.isoformat() if self.finished else None,
+			'server': self.server,
+			'operation': self.operation,
+			'dn': self.dn,
+			'changes': [{'op': op, 'attribute': a, 'values': v} for op, a, v in self.changes],
+			'ok': self.ok,
+			'error': None if self.error is None else str(self.error),
+			'skipped': self.skipped,
+		}
+
+
 def _wrap_write(original):
+	"""Wraps add/modify/delete: the gate is asked first (show/confirm/dryrun), listeners get
+	write_end(info), cached searches are dropped afterwards."""
+	signature = inspect.signature(original)
+
 	@functools.wraps(original)
 	async def wrapper(self, *args, **kwargs):
+		bound = signature.bind(self, *args, **kwargs)
+		params = bound.arguments
+		info = WriteInfo(_server_name(self), original.__name__, params.get('entry'),
+			params.get('changes', params.get('attributes')))
+		if _gate is not None and hasattr(_gate, 'write'):
+			try:
+				decision = await _gate.write(info)
+			except QueryAborted as e:
+				decision, info.reason = SKIP, str(e)
+			if decision == SKIP:
+				info.skipped = True
+				info.error = Exception('not sent: %s' % (info.reason or 'skipped'))
+				info.finished = datetime.datetime.now(datetime.timezone.utc)
+				_notify('write_end', info)
+				return False, info.error
 		try:
-			return await original(self, *args, **kwargs)
+			result = await original(self, *args, **kwargs)
+		except Exception as e:
+			info.ok, info.error = False, e
+			raise
+		else:
+			try:
+				info.ok, info.error = result
+			except (TypeError, ValueError):
+				info.ok = bool(result)
+			return result
 		finally:
-			if _cache is not None:
+			info.finished = datetime.datetime.now(datetime.timezone.utc)
+			if _cache is not None and not info.skipped:
 				_cache.invalidate_queries()
+			_notify('write_end', info)
 
 	wrapper.__msldap_ops_original__ = original
 	return wrapper

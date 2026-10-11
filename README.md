@@ -239,9 +239,21 @@ what happens before an LDAP search is sent:
   ones (e.g. `find_admins`) only show their first stage; `help <command>` lists the queries of the
   msldap-ops commands.
 
-After each command a summary shows what actually happened: queries sent, skipped, where the command
-was aborted, and how many searches were answered from the cache. Every query, including skipped ones, is
-recorded in the query journal.
+Changes to the directory (add, modify, delete; e.g. `addusertogroup`, `setsd`, `changeuserpw`,
+`addcomputer`, `shadowcred`) go through the same gate: shown in `show`, `confirm` and `dryrun` with
+DN, operation, attributes and values (passwords hidden, security descriptors as SDDL), always
+confirmed in `confirm` (also within navigation commands) and never sent in `dryrun`:
+
+```text
+[change #1] modify CN=Domain Admins,CN=Users,DC=essos,DC=local
+            add member: CN=khal.drogo,CN=Users,DC=essos,DC=local
+send? [y]es / [n]o, skip / [a]ll for this command / [q]uit command:
+```
+
+After each command a summary shows what actually happened: queries and changes sent, skipped, where
+the command was aborted, and how many searches were answered from the cache. Every query and every
+change, including skipped ones, is recorded in the query journal (changes with `"type": "write"`,
+a record of what was changed, e.g. for the cleanup after an engagement).
 
 The msldap shell sends a keepalive search on the domain object every 10 seconds. msldap-ops uses
 300 seconds; `--keepalive SECONDS` changes it, `--keepalive 0` stops it after the login. Keepalive

@@ -33,6 +33,10 @@ RULES = [
 	(r'^\[(ldap|dryrun) #\d+\] .*$', 'bright_black'),
 	(r'^ +(filter|attributes): .*$', 'bright_black'),
 	(r'^\[cache\] .*$', 'bright_black'),
+	# changes shown by opsec: they modify the directory, so they stand out
+	(r'^\[change #\d+\] .*$', 'bold yellow'),
+	(r'^\[dryrun #\d+\] (add|modify|delete) .*$', 'bold yellow'),
+	(r'^ +(set|add|replace|delete) [\w;-]+: .*$', 'yellow'),
 	(r'^\[opsec\].*$', 'dim'),
 	(r'^send\? .*$', 'bold'),
 	(r'^(Privileged groups in|Privileged accounts:|adminCount=1 users|Name or description contains|Template |Errors:).*$', 'bold'),

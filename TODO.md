@@ -32,8 +32,8 @@
 - [x] Verify against GOAD (`dev/goad-test-ops.sh`)
 - [ ] Try `confirm` interactively
 - [ ] Optional jitter for `bofhound_collect` delays
-- [ ] Writing operations (add/modify/delete, msldap's addusertogroup, setsd, changeuserpw, ...) are
-      neither shown nor confirmed by `opsec`, and `dryrun` sends them; gate them like searches
+- [x] Writing operations (add/modify/delete, msldap's addusertogroup, setsd, changeuserpw, ...) go
+      through the opsec gate (shown, confirmed, not sent in dryrun) and into the journal
 - [ ] Review which writing commands are missing for daily work (granting rights such as
       GenericAll/WriteDacl/DCSync on an object, owner changes, shadow credentials cleanup, ...)
 
