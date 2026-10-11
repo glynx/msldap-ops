@@ -219,3 +219,32 @@ def test_find_highlights_the_match(monkeypatch, capsys):
 	monkeypatch.setattr(ui, 'output_width', lambda: None)
 	assert asyncio.run(console.do_find('*lannister')) is True
 	assert '\x1b' not in capsys.readouterr().out
+
+
+def test_groupmembers_resolves_paths(capsys):
+	import asyncio
+
+	from msldap_ops.shell import MSLDAPOpsConsole
+
+	class Client:
+		_serverinfo = {'namingContexts': ['DC=x']}
+
+		def __init__(self):
+			self.calls = []
+
+		async def get_group_members(self, dn, recursive=False):
+			self.calls.append((dn, recursive))
+			for name in ('CN=a,DC=x', 'CN=b,DC=x'):
+				yield type('O', (), {'distinguishedName': name})(), None
+
+	console = MSLDAPOpsConsole(None)
+	console.connection = Client()
+	console._current_dn = 'CN=Domain Admins,CN=Users,DC=x'
+	# '.' is the current object, recursive by default
+	assert asyncio.run(console.do_groupmembers('.')) is True
+	assert console.connection.calls[-1] == ('CN=Domain Admins,CN=Users,DC=x', True)
+	out = capsys.readouterr().out
+	assert 'CN=a,DC=x' in out and out.rstrip().endswith('(2 objects)')
+	# a relative path and recursive off
+	assert asyncio.run(console.do_groupmembers('..', '0')) is True
+	assert console.connection.calls[-1] == ('CN=Users,DC=x', False)

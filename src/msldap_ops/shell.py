@@ -854,6 +854,34 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 	def _laps_completions(self):
 		return WordCompleter(['.', 'all'])
 
+	async def do_groupmembers(self, path='.', recursive='1'):
+		"""Members of a group, like msldap's groupmembers but with paths as for cd.
+
+		groupmembers [path] [recursive]   path: group DN or path (default: current object)
+		                                  recursive 0: direct members only (default: nested too)
+		"""
+		if self.connection is None:
+			print('Not connected, run login first')
+			return False
+		try:
+			dn = navigation.resolve(path, self._current_dn, self._naming_contexts())
+		except ValueError as e:
+			print(e)
+			return False
+		recurse = str(recursive).lower() not in ('0', 'false', 'no')
+		n = 0
+		async for obj, err in self.connection.get_group_members(dn, recursive=recurse):
+			if err is not None:
+				print(records.search_error(err, dn))
+				return False
+			print(obj.distinguishedName)
+			n += 1
+		ui.out(records.count_line(n))
+		return True
+
+	def _groupmembers_completions(self):
+		return self._cd_completions()
+
 	async def do_acl(self, path='.', show='all'):
 		"""Readable ACL of one object: owner, DACL with decoded rights, object types and scope.
 
