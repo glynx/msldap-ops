@@ -5,7 +5,7 @@ from msldap.protocol.constants import SUBTREE
 from msldap.wintypes.asn1.sdflagsrequest import SDFlagsRequest, SDFlagsRequestValue
 from prompt_toolkit.completion import WordCompleter
 
-from msldap_ops import hooks, opsec, presets, privileged
+from msldap_ops import hooks, opsec, presets, privileged, templates
 
 
 def sd_flags_control():
@@ -202,3 +202,53 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		for line in privileged.format_report(report):
 			print(line)
 		return not report.errors
+
+	async def do_templates(self, selection=None):
+		"""Certificate templates in a certipy-like layout.
+
+		templates             table of all templates: CAs, client authentication, enrollee
+		                      supplies subject, manager approval, vulnerabilities
+		templates <name>      details of one template (name or display name)
+		templates vulnerable  details of all published templates with vulnerabilities
+		templates enabled     details of all published templates
+
+		Details show the decoded flags one per line (security relevant bits marked with [!]),
+		EKUs, validity, key size and the principals of the permissions. Vulnerabilities (ESC1-4,
+		ESC9) are checked for the token of the bound user; accounts bound through a trust are
+		checked as low privileged users.
+
+		LDAP queries: the bound user and its tokenGroups, the enrollment services, the templates
+		(with the SD flags control); details additionally resolve the SIDs of the permissions
+		that are not cached yet.
+		"""
+		if self.connection is None:
+			print('Not connected, run login first')
+			return False
+		mode = (selection or '').lower()
+		name = None if mode in ('', 'vulnerable', 'enabled') else selection
+		report = await templates.collect(self.connection, name)
+		if report.note:
+			print('Note: %s' % report.note)
+		if mode == '':
+			for line in templates.summary_lines(report):
+				print(line)
+			print('Vulnerabilities checked for %s. Details: templates <name>' % report.principal)
+			return True
+
+		selected = report.templates
+		if mode == 'vulnerable':
+			selected = [t for t in selected if t.enabled and t.vulns]
+		elif mode == 'enabled':
+			selected = [t for t in selected if t.enabled]
+		if not selected:
+			print('No templates found' if name else 'No matching templates')
+			return name is None
+		for info in selected:
+			principals = await templates.resolve_principals(self.connection, info)
+			for line in templates.detail_lines(info, principals, report.principal):
+				print(line)
+			print()
+		return True
+
+	def _templates_completions(self):
+		return WordCompleter(['vulnerable', 'enabled'])

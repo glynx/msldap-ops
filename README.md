@@ -14,6 +14,7 @@ Features:
 
 - **Opsec modes** (`opsec`): show, confirm or suppress every LDAP search before it is sent, for all
   commands including the msldap built-ins.
+- **Certificate templates** (`templates`) in a certipy-like layout with decoded flags.
 - **Privileged accounts** (`find_admins`): recursive members of the protected groups, found by SID, with
   their risky settings.
 
@@ -104,6 +105,24 @@ root groups can only be listed on a DC of the forest root.
 
 In the shell, `log` shows the log files, `log off` / `log on` pause and resume logging.
 `--log-dir` changes the directory, `--no-log` disables logging completely.
+
+## Certificate templates
+
+```text
+templates                 table: CAs, client authentication, enrollee supplies subject,
+                          manager approval, vulnerabilities
+templates <name>          details of one template
+templates vulnerable      details of the published templates with vulnerabilities
+templates enabled         details of all published templates
+```
+
+The details follow certipy: msPKI-Certificate-Name-Flag, msPKI-Enrollment-Flag and
+msPKI-Private-Key-Flag decoded one flag per line with the security relevant bits marked `[!]`,
+EKUs, manager approval, authorized signatures, validity and renewal period, minimum key size and the
+principals of the enrollment and object control permissions. Vulnerabilities (ESC1-4, ESC9) are
+checked for the token of the bound user; an account bound through a trust is checked as a low
+privileged user of the connected domain. The table needs 4 LDAP searches, the details additionally
+resolve the SIDs of the permissions.
 
 ## Opsec
 

@@ -41,9 +41,12 @@
 
 ## ADCS
 
-- [ ] Template output like certipy: decoded `msPKI-Certificate-Name-Flag`, `msPKI-Enrollment-Flag`,
+- [x] Template output like certipy: decoded `msPKI-Certificate-Name-Flag`, `msPKI-Enrollment-Flag`,
       `msPKI-Private-Key-Flag`, EKUs, with the security relevant bits highlighted
-      (ENROLLEE_SUPPLIES_SUBJECT, NO_SECURITY_EXTENSION, PEND_ALL_REQUESTS, ...)
+      (ENROLLEE_SUPPLIES_SUBJECT, NO_SECURITY_EXTENSION, PEND_ALL_REQUESTS, ...) -> `templates`
+- [ ] Verify `templates` against GOAD (`dev/goad-test-ops.sh`)
+- [ ] CA level checks (ESC6 EDITF_ATTRIBUTESUBJECTALTNAME2, ESC7 CA permissions, ESC8 web enrollment)
+      need the CA registry/RPC, not LDAP; at least list the CA permissions from LDAP
 - [ ] Cross-domain / cross-forest checks (`adcs-check [DOMAIN\user]`): take the token groups from
       the user's own domain and map them to foreign security principals in the target forest,
       so that e.g. NORTH\jon.snow can be checked against the ESSOS CA. Same-forest users of

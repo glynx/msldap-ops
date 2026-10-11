@@ -7,7 +7,8 @@
 #   dev/goad-test-ops.sh
 #
 # Uses the same configuration as goad-test-msldap.sh (dev/goad.env, see dev/goad.env.example):
-# NORTH_DC, ROOT_DC, LOWPRIV_USER, LOWPRIV_PASS, ROOT_USER, ROOT_PASS. msldap is taken from the checkout configured in
+# NORTH_DC, ROOT_DC, ESSOS_DC, LOWPRIV_USER, LOWPRIV_PASS, ROOT_USER, ROOT_PASS,
+# ESSOS_LOWPRIV_USER, ESSOS_LOWPRIV_PASS. msldap is taken from the checkout configured in
 # [tool.uv.sources] of pyproject.toml (../msldap), bofhound is run via uvx.
 #
 # Results end up in dev/results/ops-<timestamp>/ (git-ignored).
@@ -23,6 +24,9 @@ NORTH_DC="${NORTH_DC:-192.168.56.11}"
 LOWPRIV_USER="${LOWPRIV_USER:-samwell.tarly}"
 LOWPRIV_PASS="${LOWPRIV_PASS:-Heartsbane}"
 ROOT_DC="${ROOT_DC:-192.168.56.10}"
+ESSOS_DC="${ESSOS_DC:-192.168.56.12}"
+ESSOS_LOWPRIV_USER="${ESSOS_LOWPRIV_USER:-khal.drogo}"
+ESSOS_LOWPRIV_PASS="${ESSOS_LOWPRIV_PASS:-horse}"
 ROOT_USER="${ROOT_USER:-cersei.lannister}"
 ROOT_PASS="${ROOT_PASS:-il0vejaime}"
 
@@ -47,6 +51,7 @@ mkurl() { # mkurl <domain> <user> <pass> <host>
 }
 URL="$(mkurl NORTH "$LOWPRIV_USER" "$LOWPRIV_PASS" "$NORTH_DC")"
 ROOT_URL="$(mkurl SEVENKINGDOMS "$ROOT_USER" "$ROOT_PASS" "$ROOT_DC")"
+ESSOS_URL="$(mkurl ESSOS "$ESSOS_LOWPRIV_USER" "$ESSOS_LOWPRIV_PASS" "$ESSOS_DC")"
 
 ops() { # ops <outfile> <commands...>
   local out="$1"
@@ -121,6 +126,20 @@ check "Schema Admins listed on the forest root" '^  [^ ].* \(S-1-5-21-[0-9-]+-51
 check "name search runs" "^Name or description contains 'adm', outside the privileged groups: [0-9]+$" "$RESULTS/admins-north.txt"
 echo "   INFO  $(grep -E "^Name or description contains" "$RESULTS/admins-north.txt" || true)"
 echo "   INFO  findings on north: $(grep -oE '(kerberoastable|asrep-roastable|password-never-expires|unconstrained-delegation|delegable|password-not-required)' "$RESULTS/admins-north.txt" | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
+
+echo
+echo "== certificate templates"
+"$OPS" --no-log --opsec show "$URL" login templates "templates User" >"$RESULTS/templates-north.txt" 2>&1 || true
+check "table of templates" '^  Name +CAs +Client Auth +Enrollee Subject +Approval +Vulnerabilities$' "$RESULTS/templates-north.txt"
+check "checked for the bound user" "^Vulnerabilities checked for NORTH\\\\$LOWPRIV_USER\\." "$RESULTS/templates-north.txt"
+check "User template flags decoded one per line" '^  Certificate Name Flag +: SUBJECT_ALT_REQUIRE_UPN$' "$RESULTS/templates-north.txt"
+check "template table needs 4 searches" '^\[opsec\] templates: 4 LDAP queries issued$' "$RESULTS/templates-north.txt"
+"$OPS" --no-log "$ESSOS_URL" login "templates vulnerable" >"$RESULTS/templates-essos.txt" 2>&1 || true
+check "essos: ESC1 template marked" '^  Enrollee Supplies Subject +: True \[!\]$' "$RESULTS/templates-essos.txt"
+check "essos: ESC1 reported for $ESSOS_LOWPRIV_USER" "^  \\[!\\] Vulnerabilities for ESSOS\\\\$ESSOS_LOWPRIV_USER" "$RESULTS/templates-essos.txt"
+check "essos: ESC1 finding" '^    ESC1 +: ' "$RESULTS/templates-essos.txt"
+echo "   INFO  essos vulnerable templates: $(grep -E '^Template ' "$RESULTS/templates-essos.txt" | cut -d' ' -f2 | tr '\n' ' ')"
+echo "   INFO  essos findings: $(grep -oE '^    ESC[0-9]+' "$RESULTS/templates-essos.txt" | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
 
 echo
 echo "== opsec"
