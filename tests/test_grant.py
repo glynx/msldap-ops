@@ -28,10 +28,9 @@ class Client:
 			if name in query:
 				yield {'objectName': 'CN=%s,DC=x' % name, 'attributes': {'objectSid': WSID.from_string(sid).to_bytes(), 'sAMAccountName': name}}, None
 
-	async def modify(self, entry, changes, controls=None):
-		self.modified.append((entry, changes))
-		# apply so a following read sees it
-		self.sd = changes['nTSecurityDescriptor'][0][1]
+	async def set_objectacl_by_dn(self, dn, data, flags=None):
+		self.modified.append((dn, data))
+		self.sd = data  # apply so a following read sees it
 		return True, None
 
 

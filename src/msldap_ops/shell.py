@@ -944,9 +944,9 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			print('Nothing to %s: %s %s for %s is %s' % (action, right, 'on', target,
 				'already present' if action == 'grant' else 'not present'))
 			return True
-		# write the whole security descriptor back; the hook's undo restores the previous one
-		ok, err = await self.connection.modify(target, {'nTSecurityDescriptor': [('replace', new_bytes)]},
-			controls=[sd_flags_control()])
+		# write the whole security descriptor back (msldap builds the SD flags control and routes
+		# through the wrapped connection.modify, so opsec and undo apply); undo restores the old one
+		ok, err = await self.connection.set_objectacl_by_dn(target, new_bytes)
 		if err is not None:
 			print('%s failed: %s' % (action, err))
 			return False
