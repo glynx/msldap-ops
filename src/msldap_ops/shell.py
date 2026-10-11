@@ -17,7 +17,7 @@ from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.patch_stdout import patch_stdout
 
 from msldap_ops import __version__
-from msldap_ops import acl, changes as changelog, hooks, laps, navigation, opsec, presets, privileged, records, templates, ui
+from msldap_ops import aces, acl, changes as changelog, hooks, laps, navigation, opsec, presets, privileged, records, templates, ui
 from msldap_ops import history as command_history
 from msldap_ops import transcript
 
@@ -72,7 +72,7 @@ HELP_CATEGORIES = [
 		'certify', 'certify2', 'addenrollmentright', 'addcerttemplatenameflagaltname']),
 	('DNS', ['dnsquery', 'dnsqueryall', 'dnsdump', 'dnszones', 'dnssoa', 'dnsgetserial',
 		'dnsadd', 'dnsremove', 'dnsdelete', 'dnsmodify', 'dnsrestore']),
-	('Writing (changes the directory)', ['addusertogroup', 'deluserfromgroup', 'adduser', 'deluser',
+	('Writing (changes the directory)', ['grant', 'revoke', 'addusertogroup', 'deluserfromgroup', 'adduser', 'deluser',
 		'addcomputer', 'changeuserpw', 'enableuser', 'disableuser', 'unlockuser', 'addspn', 'delspn',
 		'addhostname', 'changesamaccountname', 'setsd', 'changeowner', 'addprivdcsync',
 		'addprivaddmember', 'add_genericwrite', 'addallowedtoactonbehalfofotheridentity', 'shadowcred',
@@ -882,6 +882,102 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 
 	def _groupmembers_completions(self):
 		return self._cd_completions()
+
+	async def _resolve_principal(self, principal):
+		"""SID string for a principal given as a SID or an account name (sAMAccountName/name)."""
+		if principal.upper().startswith('S-1-'):
+			return principal.upper()
+		value = navigation.escape_glob(principal)
+		found = []
+		async for entry, err in self.connection.pagedsearch('(|(sAMAccountName=%s)(name=%s))' % (value, value),
+				['objectSid', 'sAMAccountName'], tree=self.connection._tree):
+			if err is not None:
+				raise err
+			sid = privileged.sid_string(privileged.attr(entry, 'objectSid'))
+			if sid:
+				found.append((privileged.attr(entry, 'sAMAccountName') or entry['objectName'], sid))
+		if not found:
+			print('No principal found for %r (use a SID or an exact account name)' % principal)
+			return None
+		if len(found) > 1:
+			print('%r is ambiguous:' % principal)
+			for name, sid in found:
+				print('  %s  %s' % (sid, name))
+			return None
+		return found[0][1]
+
+	async def _read_sd(self, dn):
+		"""The security descriptor bytes of an object (owner, group, DACL), or None."""
+		async for entry, err in self.connection.pagedsearch('(objectClass=*)', ['nTSecurityDescriptor'],
+				controls=[sd_flags_control()], tree=dn, search_scope=BASE):
+			if err is not None:
+				print(records.search_error(err, dn))
+				return None
+			sd = entry['attributes'].get('nTSecurityDescriptor')
+			if sd is None:
+				print('No security descriptor returned for %s (no read access?)' % dn)
+				return None
+			return sd.to_bytes() if hasattr(sd, 'to_bytes') else sd
+		print('%s not found' % dn)
+		return None
+
+	async def _grant_revoke(self, action, principal, right, path):
+		if self.connection is None:
+			print('Not connected, run login first')
+			return False
+		if right.lower() not in aces.RIGHTS:
+			print("Unknown right '%s'. Known: %s" % (right, ', '.join(aces.RIGHT_NAMES)))
+			return False
+		try:
+			target = navigation.resolve(path, self._current_dn, self._naming_contexts())
+		except ValueError as e:
+			print(e)
+			return False
+		sid = await self._resolve_principal(principal)
+		if sid is None:
+			return False
+		sd_bytes = await self._read_sd(target)
+		if sd_bytes is None:
+			return False
+		new_bytes, changed = (aces.grant if action == 'grant' else aces.revoke)(sd_bytes, sid, right)
+		if changed == 0:
+			print('Nothing to %s: %s %s for %s is %s' % (action, right, 'on', target,
+				'already present' if action == 'grant' else 'not present'))
+			return True
+		# write the whole security descriptor back; the hook's undo restores the previous one
+		ok, err = await self.connection.modify(target, {'nTSecurityDescriptor': [('replace', new_bytes)]},
+			controls=[sd_flags_control()])
+		if err is not None:
+			print('%s failed: %s' % (action, err))
+			return False
+		print('%s: %s %s on %s for %s (%d ACE%s)' % (action, right, '' if action == 'grant' else 'removed from',
+			target, sid, changed, '' if changed == 1 else 's'))
+		return bool(ok)
+
+	async def do_grant(self, principal, right, path='.'):
+		"""Grants a right on an object to a principal by adding an ACE to its DACL.
+
+		grant <principal> <right> [path]
+		  principal  a SID or an exact account name (sAMAccountName/name)
+		  right      fullcontrol, genericwrite, writedacl, writeowner, resetpassword, dcsync,
+		             writemembers, writespn, writekeycredential, rbcd, allextendedrights
+		  path       the object (as for cd, default: the current object)
+		Reads the security descriptor, adds the ACE(s) and writes it back; 'undo' restores it.
+		"""
+		return await self._grant_revoke('grant', principal, right, path)
+
+	async def do_revoke(self, principal, right, path='.'):
+		"""Removes a right granted to a principal on an object (the allow ACEs matching it).
+
+		revoke <principal> <right> [path]   see 'help grant' for the arguments and rights
+		"""
+		return await self._grant_revoke('revoke', principal, right, path)
+
+	def _grant_completions(self):
+		return WordCompleter(aces.RIGHT_NAMES)
+
+	def _revoke_completions(self):
+		return WordCompleter(aces.RIGHT_NAMES)
 
 	async def do_changes(self):
 		"""Lists the directory changes made in this session and whether they can be undone.

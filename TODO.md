@@ -36,8 +36,10 @@
       through the opsec gate (shown, confirmed, not sent in dryrun) and into the journal
 - [x] Backup before every change (read the old value) and a session change log with undo
       (`changes`, `undo`); add/delete invert directly, replace is restored, add-object is removed
-- [ ] Writing commands still missing: generic grant/revoke of an ACE, set an attribute
-      (add/delete/replace, UAC flags), list/clear shadow credentials and RBCD, change owner
+- [x] Generic grant/revoke of an ACE by right name (fullcontrol, dcsync, resetpassword,
+      writemembers, rbcd, writekeycredential, ...); reads the SD, adds/removes the ACE, undoable
+- [ ] Writing commands still missing: set an attribute (add/delete/replace, UAC flags),
+      list/clear shadow credentials and RBCD, change owner
 
 ## Navigation
 

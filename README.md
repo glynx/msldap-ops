@@ -241,6 +241,25 @@ not written to the bofhound log again. `--cache-memory-only` keeps the cache off
 
 The cache also keeps an index of every DN seen in a result, for navigation.
 
+## Granting and revoking rights
+
+`grant` and `revoke` add or remove an ACE on an object's DACL for a principal, by a high-level right
+name instead of raw SDDL:
+
+```text
+grant <principal> <right> [path]    add the right
+revoke <principal> <right> [path]   remove it again
+```
+
+`principal` is a SID or an exact account name (resolved to its SID), `path` the target object (as
+for `cd`, default the current object). Rights: `fullcontrol`, `genericwrite`, `writedacl`,
+`writeowner`, `allextendedrights`, `resetpassword`, `dcsync` (adds the two replication ACEs),
+`writemembers`, `writespn`, `writekeycredential` (shadow credentials), `rbcd`.
+
+The command reads the security descriptor, adds or removes the matching ACE(s) and writes the whole
+descriptor back. `grant` is idempotent (an ACE already present is not added again). The change goes
+through opsec like any other, and `undo` restores the previous descriptor.
+
 ## Changes and undo
 
 Every directory change (add, modify, delete) is recorded in a session change log with its inverse,
