@@ -7,9 +7,10 @@
 #   dev/goad-test-ops.sh
 #
 # Uses the same configuration as goad-test-msldap.sh (dev/goad.env, see dev/goad.env.example):
+# MSLDAP_DIR (msldap checkout to test, default ../msldap; MSLDAP_DIR=git uses the locked git version),
 # NORTH_DC, ROOT_DC, ESSOS_DC, LOWPRIV_USER, LOWPRIV_PASS, ROOT_USER, ROOT_PASS,
 # ESSOS_LOWPRIV_USER, ESSOS_LOWPRIV_PASS. msldap is taken from the checkout configured in
-# [tool.uv.sources] of pyproject.toml (../msldap), bofhound is run via uvx.
+# MSLDAP_DIR, bofhound is run via uvx.
 #
 # Results end up in dev/results/ops-<timestamp>/ (git-ignored).
 
@@ -44,6 +45,14 @@ echo "== msldap-ops GOAD test run $(date -Is)"
 echo "   results:  $RESULTS"
 
 uv sync -q --project "$REPO_ROOT"
+MSLDAP_DIR="${MSLDAP_DIR:-$REPO_ROOT/../msldap}"
+if [[ "$MSLDAP_DIR" != "git" && -d "$MSLDAP_DIR" ]]; then
+  # the local checkout replaces the git dependency in the venv until the next 'uv sync' / 'uv run'
+  uv pip install -q --python "$REPO_ROOT/.venv/bin/python" -e "$MSLDAP_DIR"
+  echo "   msldap:   $MSLDAP_DIR ($(git -C "$MSLDAP_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null) $(git -C "$MSLDAP_DIR" rev-parse --short HEAD 2>/dev/null))"
+else
+  echo "   msldap:   git dependency from uv.lock"
+fi
 OPS="$REPO_ROOT/.venv/bin/msldap-ops"
 PY="$REPO_ROOT/.venv/bin/python"
 mkurl() { # mkurl <domain> <user> <pass> <host>

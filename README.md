@@ -26,8 +26,10 @@ fixes that are not (yet) upstream.
 ## Installation
 
 ```bash
-uv tool install git+ssh://git@github.com/glynx/msldap-ops.git
+uv tool install git+https://github.com/glynx/msldap-ops.git
 ```
+
+Updates: `uv tool upgrade msldap-ops` (msldap is pulled from the `main` branch of the fork).
 
 ## Usage
 
@@ -147,13 +149,20 @@ queries are not shown or confirmed and not written to the bofhound log, only to 
 
 ## Development
 
-The repository expects the msldap checkout next to it (`../msldap`), see `[tool.uv.sources]` in
-`pyproject.toml`.
-
 ```bash
 uv sync
 uv run msldap-ops --help
 uv run pytest
+```
+
+msldap comes from the `main` branch of [glynx/msldap](https://github.com/glynx/msldap), pinned in
+`uv.lock` (`uv lock --upgrade-package msldap` picks up new commits). To work against a local msldap
+checkout, install it into the venv and run without syncing, otherwise uv puts the locked version back:
+
+```bash
+uv pip install -e ../msldap
+uv run --no-sync msldap-ops ...
+uv run --no-sync pytest
 ```
 
 `dev/bofhound-roundtrip.py` writes a small log offline that can be imported with `uvx bofhound` to
@@ -162,7 +171,8 @@ check the format.
 ### Testing msldap-ops against GOAD
 
 `dev/goad-test-ops.sh` runs queries against a GOAD lab with logging enabled and imports the log with
-bofhound (via `uvx`). It uses the same `dev/goad.env` as the msldap test runner below.
+bofhound (via `uvx`). It uses the same `dev/goad.env` as the msldap test runner below and the msldap
+checkout in `../msldap` (`MSLDAP_DIR=git` tests the locked git version instead).
 
 ### Testing the msldap fork against GOAD
 

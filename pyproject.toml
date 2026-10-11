@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
 dependencies = [
-    "msldap @ git+ssh://git@github.com/glynx/msldap.git@main",
+    "msldap @ git+https://github.com/glynx/msldap.git@main",
 ]
 
 [project.scripts]
@@ -22,11 +22,6 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/msldap_ops"]
-
-# Local development only: use the msldap checkout next to this repo.
-# Remove this once the fork is pushed, so that installs use the git dependency above.
-[tool.uv.sources]
-msldap = { path = "../msldap", editable = true }
 
 [dependency-groups]
 dev = [

@@ -479,7 +479,7 @@ wheels = [
 [[package]]
 name = "msldap"
 version = "0.5.17"
-source = { editable = "../msldap" }
+source = { git = "https://github.com/glynx/msldap.git?rev=main#20f9480f3c7fc801ae4bea1722360bf9b9713047" }
 dependencies = [
     { name = "asn1crypto" },
     { name = "asyauth" },
@@ -493,20 +493,6 @@ dependencies = [
     { name = "unidns" },
     { name = "wcwidth" },
     { name = "winacl" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "asn1crypto", specifier = ">=1.3.0" },
-    { name = "asyauth", specifier = ">=0.0.18" },
-    { name = "asysocks", specifier = ">=0.2.11" },
-    { name = "prompt-toolkit", specifier = ">=3.0.2" },
-    { name = "tabulate" },
-    { name = "tqdm" },
-    { name = "unicrypto", specifier = ">=0.0.10" },
-    { name = "unidns", specifier = ">=0.0.3" },
-    { name = "wcwidth" },
-    { name = "winacl", specifier = ">=0.1.8" },
 ]
 
 [[package]]
@@ -526,7 +512,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "msldap", editable = "../msldap" }]
+requires-dist = [{ name = "msldap", git = "https://github.com/glynx/msldap.git?rev=main" }]
 
 [package.metadata.requires-dev]
 dev = [

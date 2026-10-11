@@ -62,4 +62,4 @@
 
 ## Release
 
-- [ ] Remove the `[tool.uv.sources]` path override once glynx/msldap `main` is pushed
+- [x] Remove the `[tool.uv.sources]` path override once glynx/msldap `main` is pushed (git+https dependency)
