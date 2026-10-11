@@ -91,10 +91,10 @@ class OpsecGate:
 		prefix = '[%s #%d]' % ('dryrun' if self.mode == 'dryrun' else 'ldap', self.counter)
 		for line in format_query(query, prefix):
 			self.out(line)
-		if self.mode == 'show' or self._send_all or self._single_query_command():
-			return hooks.SEND
 		if self.mode == 'dryrun':
 			return hooks.SKIP
+		if self.mode == 'show' or self._send_all or self._single_query_command():
+			return hooks.SEND
 
 		while True:
 			try:

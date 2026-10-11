@@ -69,6 +69,11 @@ async def test_confirm_lets_the_single_query_of_navigation_commands_through(gate
 	assert gate.ask.asked == 1
 
 
+async def test_dryrun_does_not_send_navigation_queries_either(gated):
+	gate, out = make_gate('dryrun', command='cat')
+	assert await search() == []
+
+
 async def test_no_summary_for_a_single_navigation_query(gated):
 	gate, out = make_gate('show', command='cat')
 	await search()
