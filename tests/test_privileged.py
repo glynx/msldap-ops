@@ -1,5 +1,7 @@
 import datetime
 
+from winacl.dtyp.sid import SID
+
 from msldap_ops import privileged
 from msldap_ops.shell import MSLDAPOpsConsole
 
@@ -69,7 +71,8 @@ class FakeClient:
 			results = MEMBERS.get(query.split(':=', 1)[1][:-1], [])
 		elif 'trustedDomain' in query:
 			assert 'trustPartner=sevenkingdoms.local' in query
-			results = [obj('CN=sevenkingdoms.local,CN=System,' + BASE, securityIdentifier=ROOT)]
+			# msldap returns securityIdentifier as raw bytes
+			results = [obj('CN=sevenkingdoms.local,CN=System,' + BASE, securityIdentifier=SID.from_string(ROOT).to_bytes())]
 		elif query.startswith('(&(adminCount=1)'):
 			results = [EDDARD, ROBERT, OLD]
 		elif '(sAMAccountName=*adm*)' in query:

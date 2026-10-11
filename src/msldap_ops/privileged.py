@@ -8,6 +8,8 @@ import datetime
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+from winacl.dtyp.sid import SID
+
 # (name, SID template); {domain} is the SID of the connected domain, {root} the forest root's
 PRIVILEGED_GROUPS = [
 	('Domain Admins', '{domain}-512'),
@@ -68,6 +70,15 @@ def attr(entry, name, default=None):
 	return default
 
 
+def sid_string(value):
+	"""SID as string; msldap returns some SID attributes (e.g. securityIdentifier) as raw bytes."""
+	if value is None:
+		return ''
+	if isinstance(value, bytes):
+		return str(SID.from_bytes(value))
+	return str(value)
+
+
 def as_list(value):
 	if value is None:
 		return []
@@ -102,7 +113,7 @@ class Account:
 		return cls(
 			dn=attr(entry, 'distinguishedName') or entry.get('objectName'),
 			name=attr(entry, 'sAMAccountName') or entry.get('objectName'),
-			sid=str(attr(entry, 'objectSid', '')),
+			sid=sid_string(attr(entry, 'objectSid')),
 			kind=kind,
 			uac=int(attr(entry, 'userAccountControl', 0) or 0),
 			admincount=int(attr(entry, 'adminCount', 0) or 0) == 1,
@@ -216,7 +227,7 @@ async def _root_domain_sid(client, errors):
 	for trust in trusts:
 		sid = attr(trust, 'securityIdentifier')
 		if sid:
-			return str(sid), root_dns
+			return sid_string(sid), root_dns
 	return None, root_dns
 
 
@@ -243,7 +254,7 @@ async def collect(client, name_pattern=DEFAULT_NAME_PATTERN):
 	for entry in await _search(client, '(objectSid=%s)' % PROTECTED_USERS.format(domain=domain_sid), ['distinguishedName'], errors):
 		pu_dn = attr(entry, 'distinguishedName') or entry['objectName']
 		for member in await _search(client, '(memberOf:%s:=%s)' % (IN_CHAIN, pu_dn), ['objectSid'], errors):
-			protected.add(str(attr(member, 'objectSid', '')))
+			protected.add(sid_string(attr(member, 'objectSid')))
 
 	lookups = [(name, sid, '(objectSid=%s)' % sid if sid else None) for name, sid in group_sids(domain_sid, root_sid)]
 	lookups += [(name, None, '(&(objectCategory=group)(sAMAccountName=%s))' % name) for name in NAMED_GROUPS]
@@ -265,7 +276,7 @@ async def collect(client, name_pattern=DEFAULT_NAME_PATTERN):
 		group = found[0]
 		result.dn = attr(group, 'distinguishedName') or group['objectName']
 		result.name = attr(group, 'sAMAccountName') or name
-		result.sid = str(attr(group, 'objectSid', sid or ''))
+		result.sid = sid_string(attr(group, 'objectSid')) or sid or ''
 		direct = {m.lower() for m in as_list(attr(group, 'member'))}
 		result.foreign = sorted(m for m in as_list(attr(group, 'member')) if _is_foreign(m, domain_dn))
 
