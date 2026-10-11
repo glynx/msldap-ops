@@ -666,7 +666,7 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		if result is None:
 			print('No security descriptor returned for %s (no read access?)' % target)
 			return False
-		ui.emit(acl.format_acl(target, *result, show=show))
+		ui.emit(acl.format_acl(target, *result, show=show, width=ui.output_width()))
 		return True
 
 	def _acl_completions(self):

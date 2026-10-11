@@ -73,6 +73,19 @@ def _width():
 	return shutil.get_terminal_size().columns
 
 
+def output_width():
+	"""Width to lay out tables for: the terminal width, or None when the output goes to a file
+	or pipe (no wrapping there)."""
+	if not enabled():
+		return None
+	try:
+		if not sys.stdout.isatty():
+			return None
+	except (AttributeError, ValueError):
+		return None
+	return _width()
+
+
 def separator():
 	return Text('\u2500' * min(_width(), 100), style='bright_black')
 
@@ -171,6 +184,19 @@ class StyledStream(io.TextIOBase):
 
 	def isatty(self):
 		return self.target.isatty()
+
+	# io.TextIOBase defines these itself (fileno raises), __getattr__ would never see them;
+	# prompt_toolkit asks fileno() for the terminal size and fell back to 80x24
+	def fileno(self):
+		return self.target.fileno()
+
+	@property
+	def encoding(self):
+		return getattr(self.target, 'encoding', 'utf-8')
+
+	@property
+	def errors(self):
+		return getattr(self.target, 'errors', None)
 
 	def __getattr__(self, name):
 		return getattr(self.target, name)

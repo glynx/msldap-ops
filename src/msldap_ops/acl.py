@@ -12,6 +12,7 @@ GUIDs that bofhound_collect stored in the query cache.
 """
 
 import base64
+import textwrap
 import uuid
 
 from winacl.dtyp.ace import (ADS_ACCESS_MASK, ACEType, AceFlags, ExtendedRightsGUID, MoreGUID, PropertySets,
@@ -262,16 +263,56 @@ async def collect(client, dn, cache=None):
 	return sd, entries, principals
 
 
-def table(rows, indent='  '):
-	widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]) - 1)]
+def fit_widths(rows, indent, width, wrap_columns):
+	"""Column widths that fit width, shrinking the wrap_columns (widest first) but not below
+	their longest word; None if the table cannot fit that way."""
+	ncols = len(rows[0])
+	widths = [max(len(r[i]) for r in rows) for i in range(ncols)]
+	if not width:
+		return widths
+	floor = [max((len(w) for r in rows for w in r[i].split()), default=0) if i in wrap_columns else widths[i]
+		for i in range(ncols)]
+	excess = len(indent) + sum(widths) + 2 * (ncols - 1) - width
+	while excess > 0:
+		candidates = [i for i in wrap_columns if widths[i] > floor[i]]
+		if not candidates:
+			return None
+		widest = max(candidates, key=lambda i: widths[i] - floor[i])
+		widths[widest] -= 1
+		excess -= 1
+	return widths
+
+
+def table(rows, indent='  ', widths=None):
+	"""Aligned columns; cells longer than their column wrap onto further lines of the row."""
+	widths = widths or [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
 	lines = []
 	for row in rows:
-		cells = [cell.ljust(widths[i]) for i, cell in enumerate(row[:-1])] + [row[-1]]
-		lines.append((indent + '  '.join(cells)).rstrip())
+		cells = [textwrap.wrap(cell, widths[i], break_on_hyphens=False) or [''] if len(cell) > widths[i] else [cell]
+			for i, cell in enumerate(row)]
+		for n in range(max(len(c) for c in cells)):
+			parts = [(c[n] if n < len(c) else '').ljust(widths[i]) for i, c in enumerate(cells)]
+			lines.append((indent + '  '.join(parts)).rstrip())
 	return lines
 
 
-def format_acl(dn, sd, entries, principals, show='all'):
+def blocks(entries_rows, indent='  ', width=None):
+	"""One block per entry, for terminals too narrow for the table:
+	    allow  NORTH\\jon.snow
+	           WriteProperty: member (this object)  [!] Write member"""
+	lines = []
+	for access, principal, rights_text, obj, scope, finding in entries_rows:
+		lines.append('%s%-12s  %s' % (indent, access, principal))
+		detail = '%s%s (%s)' % (rights_text, ': %s' % obj if obj != '-' else '', scope)
+		if finding:
+			detail += '  ' + finding
+		pad = indent + ' ' * 14
+		lines.extend(textwrap.wrap(detail, max((width or 0) - len(pad), 30), initial_indent=pad,
+			subsequent_indent=pad + '  ', break_on_hyphens=False) if width else [pad + detail])
+	return lines
+
+
+def format_acl(dn, sd, entries, principals, show='all', width=None):
 	lines = ['ACL of %s' % dn]
 	owner = str(sd.Owner) if sd.Owner is not None else None
 	if owner:
@@ -298,5 +339,11 @@ def format_acl(dn, sd, entries, principals, show='all'):
 		finding = '%s %s' % (MARK, ', '.join(e.findings)) if e.risky else ''
 		rows.append((access, e.principal, ', '.join(e.rights), e.object or '-', e.scope, finding))
 	lines.append('')
-	lines.extend(table(rows))
+	# Principal, Rights, Object, Applies to and the finding wrap at word boundaries when the
+	# terminal is too narrow; if even that does not fit, one block per entry
+	widths = fit_widths(rows, '  ', width, wrap_columns=(1, 2, 3, 4, 5))
+	if widths is None:
+		lines.extend(blocks(rows[1:], width=width))
+	else:
+		lines.extend(table(rows, widths=widths))
 	return lines

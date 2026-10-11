@@ -120,3 +120,19 @@ def test_acl_command(capsys):
 	assert asyncio.run(console.do_acl('CN=g', 'explicit')) is True
 	assert console.connection.calls[-1][2] == 'CN=g,DC=x'
 	assert asyncio.run(console.do_acl('.', 'bogus')) is False
+
+
+def test_layout_follows_the_terminal_width():
+	client, result = collect()
+	wide = acl.format_acl('CN=g,DC=x', *result, width=200)
+	assert wide == acl.format_acl('CN=g,DC=x', *result)  # fits: the plain table
+	assert all(len(line) <= 200 for line in wide)
+	# shrunk at word boundaries: no word is split
+	rows = [('a', 'NORTH\\Domain Admins', 'x'), ('b', 'short', 'y')]
+	widths = acl.fit_widths(rows, '  ', 20, wrap_columns=(1,))
+	assert acl.table(rows, widths=widths) == ['  a  NORTH\\Domain  x', '     Admins', '  b  short         y']
+	# too narrow for the table: one block per entry, nothing wider than the terminal
+	narrow = acl.format_acl('CN=g,DC=x', *result, width=80)
+	assert '  allow         NORTH\\jon.snow' in narrow
+	assert '                WriteProperty: member (this object)  [!] Write' in narrow
+	assert all(len(line) <= 80 for line in narrow)

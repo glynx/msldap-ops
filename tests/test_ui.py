@@ -129,3 +129,13 @@ def test_prompt_dn_is_shortened_to_fit():
 	assert ui.short_dn(dn, 100) == dn
 	assert ui.short_dn('CN=a,OU=b,OU=c,OU=d,DC=essos,DC=local', 33) == 'CN=a,...,OU=d,DC=essos,DC=local'
 	assert ui.short_dn(dn, 40) == 'CN=Access Control Assistance Operators,...,DC=essos,DC=local'
+
+
+def test_styled_stream_keeps_the_terminal_reachable():
+	# prompt_toolkit asks fileno() for the terminal size; io.TextIOBase's own fileno() raised
+	import io
+	import sys
+	stream = ui.StyledStream(sys.__stdout__)
+	assert stream.fileno() == sys.__stdout__.fileno()
+	assert stream.encoding == sys.__stdout__.encoding
+	assert ui.StyledStream(io.StringIO()).encoding is None
