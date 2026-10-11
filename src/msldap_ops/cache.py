@@ -13,7 +13,8 @@ complete answer. Any add/modify/delete drops the cached queries.
 A broader cached search answers a narrower one as well: same filter and controls, the wanted base DN
 at or below the cached one (subtree), all wanted attributes included (explicitly, or through '*' for
 attributes '*' returns). E.g. after bofhound_collect, 'templates' gets the templates and enrollment
-services from the cache.
+services from the cache. A read of one object (base scope, filter (objectClass=*), e.g. cat) is
+answered by any cached result that contains the object with the wanted attributes.
 
 Besides the queries the cache keeps an index of every DN seen in any result (live or cached), for
 navigation.
@@ -86,10 +87,10 @@ def _dn_under(dn, base):
 	return dn == base or dn.endswith(',' + base)
 
 
-def covers(cached, wanted):
-	"""True if the results of the cached search contain everything the wanted search returns."""
-	if cached['filter'].lower() != (wanted['filter'] or '').lower():
-		return False
+def returns_attributes(cached, wanted):
+	"""True if every object in the cached results carries what the wanted search asks for:
+	same types_only and controls (the SD flags control only matters for nTSecurityDescriptor),
+	all wanted attributes (explicitly, or through '*' for attributes '*' returns)."""
 	if cached['types_only'] != wanted['types_only']:
 		return False
 	if cached['controls'] != wanted['controls']:
@@ -97,10 +98,6 @@ def covers(cached, wanted):
 		without_sd = [c for c in cached['controls'] if SD_FLAGS_OID_HEX not in c]
 		if without_sd != wanted['controls'] or 'ntsecuritydescriptor' in wanted['attributes']:
 			return False
-	if cached['base'] != wanted['base'] and not (cached['scope'] == 2 and wanted['scope'] == 2 and _dn_under(wanted['base'], cached['base'])):
-		return False
-	if cached['base'] == wanted['base'] and cached['scope'] != wanted['scope']:
-		return False
 	have = set(cached['attributes'])
 	for attribute in wanted['attributes']:
 		if attribute in have:
@@ -108,6 +105,22 @@ def covers(cached, wanted):
 		if attribute == '*' or '*' not in have or not in_star(attribute):
 			return False
 	return True
+
+
+def covers(cached, wanted):
+	"""True if the results of the cached search contain everything the wanted search returns."""
+	if cached['filter'].lower() != (wanted['filter'] or '').lower():
+		return False
+	if cached['base'] != wanted['base'] and not (cached['scope'] == 2 and wanted['scope'] == 2 and _dn_under(wanted['base'], cached['base'])):
+		return False
+	if cached['base'] == wanted['base'] and cached['scope'] != wanted['scope']:
+		return False
+	return returns_attributes(cached, wanted)
+
+
+def is_object_read(wanted):
+	"""A base search with (objectClass=*): reads one object, whatever filter found it before."""
+	return wanted['scope'] == 0 and (wanted['filter'] or '').replace(' ', '').lower() == '(objectclass=*)'
 
 
 def project(raw, wanted):
@@ -249,6 +262,16 @@ class QueryCache:
 					self.hits += 1
 					self.last_stored = item['stored']
 					return [project(raw_from_json(e), parts) for e in item['entries'] if _dn_under(e['dn'].lower(), parts['base'])]
+			if is_object_read(parts):
+				# the object in any cached result (newest first) that returned the wanted attributes
+				for item in sorted(self.queries.values(), key=lambda v: -v['stored']):
+					if now - item['stored'] > self.ttl or not returns_attributes(item['query'], parts):
+						continue
+					for e in item['entries']:
+						if e['dn'].lower() == parts['base']:
+							self.hits += 1
+							self.last_stored = item['stored']
+							return [project(raw_from_json(e), parts)]
 		self.misses += 1
 		return None
 

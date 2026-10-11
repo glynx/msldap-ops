@@ -201,8 +201,10 @@ forest, are named if `bofhound_collect` (preset `schema`) put the schema into th
 Repeated searches (same base, scope, filter, attributes and controls) within the TTL are answered from
 the cache, without contacting the server. A broader cached search answers narrower ones as well
 (same filter, base DN at or below the cached one, attributes included explicitly or through `*`):
-after `bofhound_collect adcs`, `templates` only asks the server for the token of the bound user. This applies to every command, including the msldap
-built-ins. The cache is kept per server and account and written to `./msldap-ops-cache/` as JSON, so
+after `bofhound_collect adcs`, `templates` only asks the server for the token of the bound user. A
+read of a single object (`cat`, `acl`) is answered by any cached result that contains the object with
+the wanted attributes, whatever filter found it: after `bofhound_collect all`, `cat` on a user, group
+or computer sends nothing. This applies to every command, including the msldap built-ins. The cache is kept per server and account and written to `./msldap-ops-cache/` as JSON, so
 a new session reuses it.
 
 ```text

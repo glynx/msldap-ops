@@ -329,3 +329,36 @@ def test_cache_note_layout_and_style():
 		('DN: CN=x', 'bold cyan'), ('  (from cache: 2026-10-11 19:42)', 'bright_black')]
 	assert ('ACL of DC=x', 'bold') in spans('ACL of DC=x  (from cache: 2026-10-11 19:42)')
 	assert spans('ACL of DC=x') == [('ACL of DC=x', 'bold')]
+
+
+async def test_object_read_is_answered_by_any_cached_result(cached):
+	from msldap.protocol.constants import BASE, LEVEL
+	from msldap.protocol.messages import Control
+
+	def sd_flags_control():
+		# as msldap's MSLDAPClient.pagedsearch passes it on to the connection
+		return Control({'controlType': b'1.2.840.113556.1.4.801', 'criticality': True, 'controlValue': b'0\x03\x02\x01\x07'})
+
+	dn = 'CN=jon.snow,CN=Users,DC=north,DC=sevenkingdoms,DC=local'
+	conn = CountingConnection([raw_entry()])
+	# bofhound_collect users: another filter, '*' and nTSecurityDescriptor with the SD flags control
+	await collect(conn.pagedsearch('DC=north,DC=sevenkingdoms,DC=local', '(sAMAccountType=805306368)',
+		['*', 'nTSecurityDescriptor'], controls=[sd_flags_control()], search_scope=2))
+	assert conn.server_calls == 1
+
+	# cat: base search on the object, answered from the cache, reduced to the wanted attributes
+	results = await collect(conn.pagedsearch(dn, '(objectClass=*)', ['*'], search_scope=BASE))
+	assert conn.server_calls == 1
+	entry = results[0][0]
+	assert entry['objectName'] == dn and 'sAMAccountType' in entry['attributes']
+	assert 'nTSecurityDescriptor' not in entry['attributes']  # not in '*'
+	await collect(conn.pagedsearch(dn, '(objectClass=*)', ['nTSecurityDescriptor'], controls=[sd_flags_control()], search_scope=BASE))
+	assert conn.server_calls == 1
+
+	# not answered: an attribute '*' does not return, another object, or the children (cat *)
+	await collect(conn.pagedsearch(dn, '(objectClass=*)', ['tokenGroups'], search_scope=BASE))
+	assert conn.server_calls == 2
+	await collect(conn.pagedsearch('CN=other,DC=north', '(objectClass=*)', ['*'], search_scope=BASE))
+	assert conn.server_calls == 3
+	await collect(conn.pagedsearch('CN=Users,DC=north,DC=sevenkingdoms,DC=local', '(objectClass=*)', ['*'], search_scope=LEVEL))
+	assert conn.server_calls == 4
