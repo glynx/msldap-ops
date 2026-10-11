@@ -72,7 +72,8 @@ HELP_CATEGORIES = [
 		'certify', 'certify2', 'addenrollmentright', 'addcerttemplatenameflagaltname']),
 	('DNS', ['dnsquery', 'dnsqueryall', 'dnsdump', 'dnszones', 'dnssoa', 'dnsgetserial',
 		'dnsadd', 'dnsremove', 'dnsdelete', 'dnsmodify', 'dnsrestore']),
-	('Writing (changes the directory)', ['grant', 'revoke', 'addusertogroup', 'deluserfromgroup', 'adduser', 'deluser',
+	('Writing (changes the directory)', ['grant', 'revoke', 'setattr', 'addattr', 'delattr', 'uac',
+		'addusertogroup', 'deluserfromgroup', 'adduser', 'deluser',
 		'addcomputer', 'changeuserpw', 'enableuser', 'disableuser', 'unlockuser', 'addspn', 'delspn',
 		'addhostname', 'changesamaccountname', 'setsd', 'changeowner', 'addprivdcsync',
 		'addprivaddmember', 'add_genericwrite', 'addallowedtoactonbehalfofotheridentity', 'shadowcred',
@@ -83,6 +84,45 @@ WRITING_COMMANDS = set(HELP_CATEGORIES[-1][1]) | {
 	'addenrollmentright', 'addcerttemplatenameflagaltname',
 	'dnsadd', 'dnsremove', 'dnsdelete', 'dnsmodify', 'dnsrestore',
 }
+
+
+def _uac_flag(name):
+	"""The MSLDAP_UAC flag for a name or hex value, or raises ValueError."""
+	from msldap.ldap_objects.common import MSLDAP_UAC
+	key = name.strip().upper()
+	if key in MSLDAP_UAC.__members__:
+		return int(MSLDAP_UAC[key])
+	try:
+		return int(name, 16)
+	except ValueError:
+		raise ValueError('Unknown userAccountControl flag %r (name or hex)' % name)
+
+
+def uac_flag_names(value):
+	"""Names of the flags set in a userAccountControl value."""
+	from msldap.ldap_objects.common import MSLDAP_UAC
+	return [flag.name for flag in MSLDAP_UAC if value & int(flag)]
+
+
+def apply_uac_flags(value, changes):
+	"""Applies +FLAG/-FLAG changes to a userAccountControl value."""
+	for change in changes:
+		if change[:1] not in ('+', '-') or len(change) < 2:
+			raise ValueError('Each flag must be +NAME or -NAME, got %r' % change)
+		bit = _uac_flag(change[1:])
+		if change[0] == '+':
+			value |= bit
+		else:
+			value &= ~bit
+	return value
+
+
+def _uac_flag_names_all():
+	from msldap.ldap_objects.common import MSLDAP_UAC
+	return [flag.name for flag in MSLDAP_UAC]
+
+
+UAC_FLAG_NAMES = _uac_flag_names_all()
 
 
 class MSLDAPOpsConsole(MSLDAPClientConsole):
@@ -956,6 +996,99 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			target, sid, changed, '' if changed == 1 else 's'))
 		return bool(ok)
 
+	async def _modify(self, path, changes, description):
+		"""Resolves the path, sends one modify and reports the outcome; the change is gated and
+		undoable through the hook."""
+		if self.connection is None:
+			print('Not connected, run login first')
+			return False
+		try:
+			target = navigation.resolve(path, self._current_dn, self._naming_contexts())
+		except ValueError as e:
+			print(e)
+			return False
+		ok, err = await self.connection.modify(target, changes)
+		if err is not None:
+			print('%s failed: %s' % (description, err))
+			return False
+		print('%s on %s' % (description, target))
+		return bool(ok)
+
+	async def do_setattr(self, path, attribute, *values):
+		"""Replaces an attribute's value(s) (no value clears it).
+
+		setattr <path> <attribute> [value ...]
+		Writes the values as given; attributes with a non-string syntax may be rejected by the
+		server. Undoable.
+		"""
+		return await self._modify(path, {attribute: [('replace', list(values))]},
+			'setattr %s=%s' % (attribute, ', '.join(values) if values else '(cleared)'))
+
+	async def do_addattr(self, path, attribute, value):
+		"""Adds one value to a multi-valued attribute. addattr <path> <attribute> <value>  Undoable."""
+		return await self._modify(path, {attribute: [('add', [value])]}, 'addattr %s+=%s' % (attribute, value))
+
+	async def do_delattr(self, path, attribute, value):
+		"""Removes one value from a multi-valued attribute. delattr <path> <attribute> <value>  Undoable."""
+		return await self._modify(path, {attribute: [('delete', [value])]}, 'delattr %s-=%s' % (attribute, value))
+
+	def _setattr_completions(self):
+		return navigation.PositionalCompleter([self._cd_completions()])
+
+	_addattr_completions = _setattr_completions
+	_delattr_completions = _setattr_completions
+
+	async def do_uac(self, path='.', *flags):
+		"""Shows or changes the userAccountControl flags of an object.
+
+		uac [path]                 shows the flags that are set
+		uac <path> +FLAG -FLAG     sets (+) or clears (-) flags, e.g. +DONT_REQUIRE_PREAUTH,
+		                           +TRUSTED_FOR_DELEGATION, -ACCOUNTDISABLE
+		Flag names are those of userAccountControl (case-insensitive); a hex value also works.
+		Changing the flags is undoable.
+		"""
+		if self.connection is None:
+			print('Not connected, run login first')
+			return False
+		try:
+			target = navigation.resolve(path, self._current_dn, self._naming_contexts())
+		except ValueError as e:
+			print(e)
+			return False
+		current = None
+		async for entry, err in self.connection.pagedsearch('(objectClass=*)', ['userAccountControl'],
+				tree=target, search_scope=BASE):
+			if err is not None:
+				print(records.search_error(err, target))
+				return False
+			current = entry['attributes'].get('userAccountControl')
+		if current is None:
+			print('%s has no userAccountControl' % target)
+			return False
+		current = int(current)
+		if not flags:
+			print('userAccountControl of %s: 0x%x' % (target, current))
+			ui.emit(['  ' + name for name in uac_flag_names(current)] or ['  (no flags)'])
+			return True
+		try:
+			new = apply_uac_flags(current, flags)
+		except ValueError as e:
+			print(e)
+			return False
+		if new == current:
+			print('userAccountControl unchanged (0x%x)' % current)
+			return True
+		ok, err = await self.connection.modify(target, {'userAccountControl': [('replace', new)]})
+		if err is not None:
+			print('uac failed: %s' % err)
+			return False
+		print('uac on %s: 0x%x -> 0x%x' % (target, current, new))
+		return bool(ok)
+
+	def _uac_completions(self):
+		signed = ['+%s' % n for n in UAC_FLAG_NAMES] + ['-%s' % n for n in UAC_FLAG_NAMES]
+		return navigation.PositionalCompleter([self._cd_completions(), WordCompleter(signed)])
+
 	async def do_grant(self, principal, right, path='.'):
 		"""Grants a right on an object to a principal by adding an ACE to its DACL.
 
@@ -994,13 +1127,9 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			return True
 		width = len(str(len(log)))
 		for i, change in enumerate(log.changes, 1):
-			if change.undone:
-				state = 'undone'
-			elif change.undoable:
-				state = 'undoable'
-			else:
-				state = 'no undo: %s' % change.reason
+			state = 'undoable' if change.undoable else 'no undo: %s' % change.reason
 			print('%s  %s  %s  [%s]' % (str(i).rjust(width), change.when.strftime('%H:%M:%S'), change.summary, state))
+		print("'undo' reverses the last undoable change, 'undo <n>' change #n (then it drops from this list)")
 		return True
 
 	async def do_undo(self, which=None):
@@ -1029,10 +1158,10 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 				print('No change #%s (see changes)' % which)
 				return False
 			if not change.undoable:
-				print('Change #%s cannot be undone: %s' % (which, 'already undone' if change.undone else change.reason))
+				print('Change #%s cannot be undone: %s' % (which, change.reason))
 				return False
 		print('Undoing: %s' % change.summary)
-		ok, err = await changelog.apply_undo(self.connection, change)
+		ok, err = await log.undo(self.connection, change)
 		if err is not None:
 			print('Undo failed: %s' % err)
 			return False

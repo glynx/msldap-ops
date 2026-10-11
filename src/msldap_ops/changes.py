@@ -20,11 +20,10 @@ class Change:
 		self.summary = describe(info)
 		self.undo = undo  # (operation, dn, changes) or None
 		self.reason = reason
-		self.undone = False
 
 	@property
 	def undoable(self):
-		return self.undo is not None and not self.undone
+		return self.undo is not None
 
 
 SUMMARY_VALUE = 48
@@ -52,8 +51,11 @@ def describe(info):
 class ChangeLog:
 	def __init__(self):
 		self.changes = []
+		self._applying = False  # while True, the write of an undo is not recorded as a new change
 
 	def write_done(self, info, undo, reason):
+		if self._applying:
+			return
 		self.changes.append(Change(info, undo, reason))
 
 	def __len__(self):
@@ -65,23 +67,30 @@ class ChangeLog:
 				return change
 		return None
 
+	async def undo(self, connection, change):
+		"""Applies the inverse of a change. On success the change is removed from the log (and the
+		undo itself is not added as a new change); the journal keeps the audit trail. (ok, error)."""
+		self._applying = True
+		try:
+			ok, err = await apply_undo(connection, change)
+		finally:
+			self._applying = False
+		if ok and change in self.changes:
+			self.changes.remove(change)
+		return ok, err
+
 
 async def apply_undo(connection, change):
-	"""Applies the inverse of a change through the connection (add/modify/delete). Returns
-	(ok, error). The undo itself goes through the gate and is recorded like any other change."""
+	"""Applies the inverse of a change through the connection (add/modify/delete/setsd). (ok, err)."""
 	operation, dn, changes = change.undo
 	if operation == 'modify':
-		ok, err = await connection.modify(dn, changes)
-	elif operation == 'delete':
-		ok, err = await connection.delete(dn)
-	elif operation == 'add':
-		ok, err = await connection.add(dn, changes)
-	elif operation == 'setsd':
+		return await connection.modify(dn, changes)
+	if operation == 'delete':
+		return await connection.delete(dn)
+	if operation == 'add':
+		return await connection.add(dn, changes)
+	if operation == 'setsd':
 		# restore the DACL only, so WriteDacl is enough (changes holds the old descriptor bytes)
 		from msldap.wintypes.asn1.sdflagsrequest import SDFlagsRequest
-		ok, err = await connection.set_objectacl_by_dn(dn, changes, flags=SDFlagsRequest.DACL_SECURITY_INFORMATION)
-	else:
-		return False, Exception('unknown undo operation %r' % operation)
-	if ok:
-		change.undone = True
-	return ok, err
+		return await connection.set_objectacl_by_dn(dn, changes, flags=SDFlagsRequest.DACL_SECURITY_INFORMATION)
+	return False, Exception('unknown undo operation %r' % operation)

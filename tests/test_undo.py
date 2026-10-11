@@ -129,14 +129,16 @@ def test_apply_undo_setsd_uses_dacl_flags(wired):
 	assert ok and calls['data'] == b'OLDSD' and calls['flags'] == SDFlagsRequest.DACL_SECURITY_INFORMATION
 
 
-def test_apply_undo_runs_the_inverse(wired):
+def test_undo_removes_the_change_and_records_nothing_new(wired):
 	conn = Conn()
 	run_modify(conn, 'CN=Admins,DC=x', {'member': [('add', ['CN=jon,DC=x'])]})
+	assert len(wired) == 1
 	change = wired.last_undoable()
-	ok, err = asyncio.run(changes.apply_undo(conn, change))
-	assert ok and err is None and change.undone
+	ok, err = asyncio.run(wired.undo(conn, change))
+	assert ok and err is None
 	assert conn.sent[-1] == ('modify', 'CN=Admins,DC=x', {'member': [('delete', ['CN=jon,DC=x'])]})
-	assert wired.last_undoable() is None  # nothing left to undo
+	# the change is gone and the undo write itself was not added as a new change
+	assert len(wired) == 0 and wired.last_undoable() is None
 
 
 def test_changes_and_undo_commands(capsys):

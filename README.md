@@ -277,8 +277,8 @@ Before a change is sent, the old value it needs for the inverse is read (one bac
 not shown or logged). `add`/`delete` of a value invert directly, a `replace` is restored to the old
 value, and a created object is removed again. Not undoable automatically: deleting an object,
 changing a password (the old one is unknown) and a value that could not be read back; `changes`
-shows the reason. An `undo` is itself an LDAP change: opsec shows or confirms it and it is recorded.
-The change log lives in the session; the query journal keeps the durable record.
+shows the reason. A successful `undo` removes the change from the list and is not itself added as a
+new change; the query journal still records the undo write for the audit trail.
 
 ## Opsec
 
