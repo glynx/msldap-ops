@@ -9,10 +9,12 @@ Features:
   that collected data can be imported into BloodHound with
   [bofhound](https://github.com/coffeegist/bofhound). Logs are written to the current working directory.
 
+- **Collection presets** for bofhound, split per object type (users, computers, groups, OUs, GPOs,
+  schema, ADCS, ...), so that no single query returns the whole directory.
+
 Planned:
 
-- **Query presets**, e.g. a bofhound collection split per object type (users, computers, groups, ...)
-  and queries for privileged accounts.
+- **Query presets** for privileged accounts.
 - **Extended shell**: all msldap shell commands plus the msldap-ops commands.
 
 msldap-ops currently depends on the [glynx/msldap](https://github.com/glynx/msldap) fork, which carries
@@ -56,6 +58,27 @@ bofhound -i msldap-ops-logs/
 bofhound needs `nTSecurityDescriptor` to build ACL edges, so request it explicitly, for example
 `query (sAMAccountType=805306368) *,nTSecurityDescriptor`. The `query` command sends the SD flags
 control, so unprivileged users get the owner, group and DACL as well.
+
+## Collecting data for bofhound
+
+`collect` runs one query per object type, with `*,nTSecurityDescriptor` and the SD flags control.
+The results are not printed, they go to the query log.
+
+```text
+collect                     list the presets and their queries
+collect all                 everything except DNS
+collect users,groups        selected presets
+collect all 5               wait 5 seconds between queries
+collect dns                 DNS nodes (computer IP addresses), not part of 'all'
+```
+
+Presets: `domain`, `users`, `computers` (including gMSAs and trust accounts), `groups`, `ous`,
+`containers`, `gpos`, `trusts`, `fsps`, `schema`, `adcs` (enterprise CAs, root/AIA CAs, NTAuth store,
+templates, issuance policies), `partitions` (NetBIOS names) and `dns`. Base DNs are taken from the
+RootDSE, so Configuration and Schema are found on child domain DCs as well.
+
+The presets cover the domain the DC belongs to. For other domains of the forest or trusted forests,
+connect to one of their DCs and run `collect` again.
 
 In the shell, `log` shows the log files, `log off` / `log on` pause and resume logging.
 `--log-dir` changes the directory, `--no-log` disables logging completely.

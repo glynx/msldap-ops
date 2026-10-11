@@ -71,20 +71,16 @@ check_cmd() { # check_cmd <description> <command...>
   fi
 }
 
-DOMAIN_DN="DC=north,DC=sevenkingdoms,DC=local"
-CONFIG_DN="CN=Configuration,DC=sevenkingdoms,DC=local"
 ATTRS='*,nTSecurityDescriptor'
 
 echo
+echo "== collect presets"
+ops collect.txt login "collect all" "collect dns" "query (sAMAccountName=$LOWPRIV_USER) $ATTRS" log
+check "collect all runs without failed queries" '^[0-9]+ objects from [0-9]+ queries, 0 failed$' "$RESULTS/collect.txt"
+check "collect dns returns DNS nodes" '^  dns/DNS nodes \(domain zones\) +[1-9]' "$RESULTS/collect.txt"
+
+echo
 echo "== query logging"
-ops collect.txt login \
-  "query (objectClass=domain) $ATTRS" \
-  "query (sAMAccountType=805306368) $ATTRS" \
-  "query (objectCategory=group) $ATTRS" \
-  "query (objectCategory=computer) $ATTRS" \
-  "query (objectClass=pKICertificateTemplate) $ATTRS $CONFIG_DN" \
-  "query (objectClass=pKIEnrollmentService) $ATTRS $CONFIG_DN" \
-  log
 LOG="$(ls "$LOGS"/msldap-ops_*.log 2>/dev/null | head -n 1 || true)"
 QLOG="$(ls "$LOGS"/msldap-ops-queries_*.jsonl 2>/dev/null | head -n 1 || true)"
 check_cmd "log file written to --log-dir" test -s "${LOG:-/nonexistent}"
@@ -92,8 +88,9 @@ check_cmd "query journal written" test -s "${QLOG:-/nonexistent}"
 check "log command shows the log location" "results: $LOGS/msldap-ops_" "$RESULTS/collect.txt"
 check "records contain base64 security descriptors" '^nTSecurityDescriptor: AQAE' "${LOG:-/dev/null}"
 check "records contain SIDs in string form" '^objectSid: S-1-5-21-' "${LOG:-/dev/null}"
+check "records contain schema GUIDs" '^schemaIDGUID: [0-9a-f]{8}-' "${LOG:-/dev/null}"
 check "queries are terminated for bofhound" '^Retrieved [0-9]+ results total$' "${LOG:-/dev/null}"
-check "query journal has the filter" '"filter": "\(objectCategory=computer\)"' "${QLOG:-/dev/null}"
+check "query journal has the filter" "\"filter\": \"\\(sAMAccountName=$LOWPRIV_USER\\)\"" "${QLOG:-/dev/null}"
 
 BEFORE="$(wc -l <"${LOG:-/dev/null}")"
 # 'log off' before login, the login itself runs queries as well
@@ -105,10 +102,13 @@ echo
 echo "== bofhound import"
 (cd "$RESULTS" && uvx bofhound -i "$LOGS" -o "$RESULTS/bofhound" >"$RESULTS/bofhound.txt" 2>&1) || true
 parsed() { grep -oE "Parsed [0-9]+ $1" "$RESULTS/bofhound.txt" | grep -oE '[0-9]+' | head -n 1; }
-for kind in Users Groups Computers Domains "Cert Templates" "Enterprise CAs"; do
+for kind in Users Groups Computers Domains "Trust Accounts" OUs Containers GPOs "Enterprise CAs" \
+  "AIA CAs" "Root CAs" "NTAuth Stores" "Cert Templates" Schemas Referrals "DNS nodes"; do
   n="$(parsed "$kind" || true)"
   check_cmd "bofhound parsed ${n:-0} $kind" test "${n:-0}" -gt 0
 done
+echo "   INFO  bofhound parsed $(parsed "Issuance Policies" || echo 0) Issuance Policies (only those with flags=2 count)"
+echo "   INFO  bofhound unknown objects: $(parsed "Unknown Objects" || echo 0)"
 check_cmd "bofhound knows $LOWPRIV_USER with ACEs" "$PY" - "$RESULTS/bofhound" "$LOWPRIV_USER" <<'EOF'
 import glob, json, sys
 out, user = sys.argv[1:]

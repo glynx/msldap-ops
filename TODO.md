@@ -12,8 +12,10 @@
 
 ## Presets
 
-- [ ] bofhound collection split per object type: users, computers, groups, domain, OUs,
-      containers, GPOs, trusts, schema (`schemaIDGUID`), ADCS (Configuration NC)
+- [x] bofhound collection split per object type: users, computers, groups, domain, OUs,
+      containers, GPOs, trusts, schema (`schemaIDGUID`), ADCS (Configuration NC) -> `collect`
+- [ ] Verify `collect` against GOAD (`dev/goad-test-ops.sh`)
+- [ ] `collect` for other domains of the forest / trusted forests in one go (second connection or GC)
 - [ ] Privileged accounts: `adminCount=1`, recursive members of the protected groups via
       `LDAP_MATCHING_RULE_IN_CHAIN`, groups resolved by RID/SID (localized names, e.g. "Domänen-Admins")
 - [ ] Admins with SPN, admins not in Protected Users / not "sensitive", admins with
