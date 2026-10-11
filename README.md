@@ -256,9 +256,10 @@ for `cd`, default the current object). Rights: `fullcontrol`, `genericwrite`, `w
 `writeowner`, `allextendedrights`, `resetpassword`, `dcsync` (adds the two replication ACEs),
 `writemembers`, `writespn`, `writekeycredential` (shadow credentials), `rbcd`.
 
-The command reads the security descriptor, adds or removes the matching ACE(s) and writes the whole
-descriptor back. `grant` is idempotent (an ACE already present is not added again). The change goes
-through opsec like any other, and `undo` restores the previous descriptor.
+The command reads the security descriptor, adds or removes the matching ACE(s) and writes back only
+the DACL, so `WriteDacl` on the target is enough (writing the owner would need `WriteOwner` and the
+DC rejects it). `grant` is idempotent (an ACE already present is not added again). The change goes
+through opsec like any other, and `undo` restores the previous DACL.
 
 ## Changes and undo
 

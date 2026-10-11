@@ -29,7 +29,7 @@ class Client:
 				yield {'objectName': 'CN=%s,DC=x' % name, 'attributes': {'objectSid': WSID.from_string(sid).to_bytes(), 'sAMAccountName': name}}, None
 
 	async def set_objectacl_by_dn(self, dn, data, flags=None):
-		self.modified.append((dn, data))
+		self.modified.append((dn, data, flags))
 		self.sd = data  # apply so a following read sees it
 		return True, None
 
@@ -51,6 +51,8 @@ def test_grant_by_sid_writes_the_sd_back():
 	assert asyncio.run(c.do_grant(SID, 'dcsync')) is True
 	assert len(client.modified) == 1
 	assert client.modified[0][0] == 'CN=Domain Admins,CN=Users,DC=x'
+	from msldap.wintypes.asn1.sdflagsrequest import SDFlagsRequest
+	assert client.modified[0][2] == SDFlagsRequest.DACL_SECURITY_INFORMATION  # DACL only
 	assert sum(str(a.Sid) == SID for a in last_aces(client)) == 2
 
 

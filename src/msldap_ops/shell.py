@@ -944,9 +944,11 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			print('Nothing to %s: %s %s for %s is %s' % (action, right, 'on', target,
 				'already present' if action == 'grant' else 'not present'))
 			return True
-		# write the whole security descriptor back (msldap builds the SD flags control and routes
-		# through the wrapped connection.modify, so opsec and undo apply); undo restores the old one
-		ok, err = await self.connection.set_objectacl_by_dn(target, new_bytes)
+		# write back only the DACL, so WriteDacl alone is enough (writing owner/group would need
+		# WriteOwner and the DC rejects it with constraintViolation); routes through the wrapped
+		# connection.modify, so opsec and undo apply
+		from msldap.wintypes.asn1.sdflagsrequest import SDFlagsRequest
+		ok, err = await self.connection.set_objectacl_by_dn(target, new_bytes, flags=SDFlagsRequest.DACL_SECURITY_INFORMATION)
 		if err is not None:
 			print('%s failed: %s' % (action, err))
 			return False

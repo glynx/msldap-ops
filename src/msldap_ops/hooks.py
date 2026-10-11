@@ -402,6 +402,15 @@ async def _prepare_undo(connection, info):
 		return None, 'deleting an object cannot be undone automatically'
 	if info.operation != 'modify':
 		return None, 'not undoable'
+	# a security-descriptor change is restored through the SD API with DACL flags only (so WriteDacl
+	# is enough), not a raw modify of the whole descriptor
+	if info.modify_ops and all(attr.lower() == 'ntsecuritydescriptor' and op == 'replace'
+			for op, attr, _ in info.modify_ops):
+		old = await _read_raw(connection, info.dn, ['nTSecurityDescriptor'])
+		values = (old or {}).get('ntsecuritydescriptor')
+		if not values:
+			return None, 'old security descriptor not readable'
+		return ('setsd', info.dn, values[0]), None
 	needs_old = [attr for op, attr, _ in info.modify_ops
 		if op == 'replace' and attr.lower() not in SECRET_ATTRIBUTES]
 	old = await _read_raw(connection, info.dn, needs_old) if needs_old else {}

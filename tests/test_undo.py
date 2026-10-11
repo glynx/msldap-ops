@@ -75,14 +75,21 @@ def test_delete_value_inverts_to_add(wired):
 	assert wired.changes[0].undo == ('modify', 'CN=Admins,DC=x', {'member': [('add', ['CN=jon,DC=x'])]})
 
 
-def test_replace_reads_and_restores_old_value(wired):
+def test_sd_replace_is_restored_via_setsd(wired):
 	conn = Conn(old={'ntsecuritydescriptor': [b'OLDSD']})
 	run_modify(conn, 'CN=g,DC=x', {'nTSecurityDescriptor': [('replace', b'NEWSD')]})
 	assert conn.reads and conn.reads[0][2] is True  # read with the SD flags control
+	# a security-descriptor change is undone through setsd with the old bytes (DACL only)
+	assert wired.changes[0].undo == ('setsd', 'CN=g,DC=x', b'OLDSD')
+
+
+def test_other_replace_restores_old_value(wired):
+	conn = Conn(old={'description': [b'old text']})
+	run_modify(conn, 'CN=g,DC=x', {'description': [('replace', 'new text')]})
 	undo = wired.changes[0].undo
 	assert undo[0] == 'modify' and undo[1] == 'CN=g,DC=x'
-	op, value = undo[2]['nTSecurityDescriptor'][0]
-	assert op == 'replace' and isinstance(value, RawValue) and value.encode() == [b'OLDSD']
+	op, value = undo[2]['description'][0]
+	assert op == 'replace' and isinstance(value, RawValue) and value.encode() == [b'old text']
 
 
 def test_add_object_inverts_to_delete(wired):
@@ -102,6 +109,24 @@ def test_secret_change_is_not_undoable(wired):
 	run_modify(conn, 'CN=u,DC=x', {'unicodePwd': [('replace', '"New1!"')]})
 	assert not wired.changes[0].undoable and 'secret' in wired.changes[0].reason
 	assert conn.reads == []  # the secret is not read
+
+
+def test_apply_undo_setsd_uses_dacl_flags(wired):
+	calls = {}
+
+	class SDConn(Conn):
+		async def set_objectacl_by_dn(self, dn, data, flags=None):
+			calls['dn'] = dn
+			calls['data'] = data
+			calls['flags'] = flags
+			return True, None
+
+	conn = SDConn(old={'ntsecuritydescriptor': [b'OLDSD']})
+	run_modify(conn, 'CN=g,DC=x', {'nTSecurityDescriptor': [('replace', b'NEWSD')]})
+	change = wired.last_undoable()
+	ok, err = asyncio.run(changes.apply_undo(conn, change))
+	from msldap.wintypes.asn1.sdflagsrequest import SDFlagsRequest
+	assert ok and calls['data'] == b'OLDSD' and calls['flags'] == SDFlagsRequest.DACL_SECURITY_INFORMATION
 
 
 def test_apply_undo_runs_the_inverse(wired):

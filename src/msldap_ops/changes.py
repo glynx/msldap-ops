@@ -67,6 +67,10 @@ async def apply_undo(connection, change):
 		ok, err = await connection.delete(dn)
 	elif operation == 'add':
 		ok, err = await connection.add(dn, changes)
+	elif operation == 'setsd':
+		# restore the DACL only, so WriteDacl is enough (changes holds the old descriptor bytes)
+		from msldap.wintypes.asn1.sdflagsrequest import SDFlagsRequest
+		ok, err = await connection.set_objectacl_by_dn(dn, changes, flags=SDFlagsRequest.DACL_SECURITY_INFORMATION)
 	else:
 		return False, Exception('unknown undo operation %r' % operation)
 	if ok:
