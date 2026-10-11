@@ -248,3 +248,25 @@ def test_groupmembers_resolves_paths(capsys):
 	# a relative path and recursive off
 	assert asyncio.run(console.do_groupmembers('..', '0')) is True
 	assert console.connection.calls[-1] == ('CN=Users,DC=x', False)
+
+
+def test_positional_completer():
+	from prompt_toolkit.completion import WordCompleter
+	from prompt_toolkit.document import Document
+
+	from msldap_ops.navigation import PositionalCompleter
+
+	pc = PositionalCompleter([None, WordCompleter(['dcsync', 'resetpassword', 'rbcd']), WordCompleter(['DC=x'])])
+
+	def at(text):
+		return [c.text for c in pc.get_completions(Document(text, len(text)), None)]
+
+	# first argument (principal): no suggestions
+	assert at('') == [] and at('jon') == []
+	# second argument: the rights, filtered by the partial word
+	assert at('jon ') == ['dcsync', 'resetpassword', 'rbcd']
+	assert at('jon r') == ['resetpassword', 'rbcd']
+	# third argument: the path completer
+	assert at('jon dcsync ') == ['DC=x']
+	# nothing past the defined positions
+	assert at('jon dcsync DC=x extra ') == []

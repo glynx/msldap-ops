@@ -974,10 +974,11 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		return await self._grant_revoke('revoke', principal, right, path)
 
 	def _grant_completions(self):
-		return WordCompleter(aces.RIGHT_NAMES)
+		# principal (no suggestions), then the right, then the target path
+		return navigation.PositionalCompleter([None, WordCompleter(aces.RIGHT_NAMES), self._cd_completions()])
 
 	def _revoke_completions(self):
-		return WordCompleter(aces.RIGHT_NAMES)
+		return self._grant_completions()
 
 	async def do_changes(self):
 		"""Lists the directory changes made in this session and whether they can be undone.

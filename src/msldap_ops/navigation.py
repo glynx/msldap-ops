@@ -189,6 +189,27 @@ def quote(name):
 	return "'%s'" % name.replace("'", "'\"'\"'")
 
 
+class PositionalCompleter(Completer):
+	"""Dispatches completion by argument position: completers[i] is used for the i-th argument,
+	None means no suggestions there. The last completer is not repeated for further arguments."""
+
+	def __init__(self, completers):
+		self.completers = completers
+
+	def get_completions(self, document, complete_event):
+		from prompt_toolkit.document import Document
+		text = document.text_before_cursor
+		tokens = text.split()
+		index = len(tokens) if (not text or text[-1].isspace()) else len(tokens) - 1
+		if index >= len(self.completers):
+			return
+		completer = self.completers[index]
+		if completer is None:
+			return
+		word = '' if (not text or text[-1].isspace()) else tokens[-1]
+		yield from completer.get_completions(Document(word, len(word)), complete_event)
+
+
 class DNCompleter(Completer):
 	"""Completes cd arguments: '..', children of the current DN (relative, at any depth known),
 	naming contexts (absolute)."""
