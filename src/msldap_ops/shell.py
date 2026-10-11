@@ -988,12 +988,15 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		# WriteOwner and the DC rejects it with constraintViolation); routes through the wrapped
 		# connection.modify, so opsec and undo apply
 		from msldap.wintypes.asn1.sdflagsrequest import SDFlagsRequest
-		ok, err = await self.connection.set_objectacl_by_dn(target, new_bytes, flags=SDFlagsRequest.DACL_SECURITY_INFORMATION)
+		verb = 'grant' if action == 'grant' else 'revoke'
+		label = '%s %s for %s on %s (%d ACE%s)' % (verb, right, sid, target, changed, '' if changed == 1 else 's')
+		with hooks.labeled(label):
+			ok, err = await self.connection.set_objectacl_by_dn(target, new_bytes, flags=SDFlagsRequest.DACL_SECURITY_INFORMATION)
 		if err is not None:
 			print('%s failed: %s' % (action, err))
 			return False
-		print('%s: %s %s on %s for %s (%d ACE%s)' % (action, right, '' if action == 'grant' else 'removed from',
-			target, sid, changed, '' if changed == 1 else 's'))
+		print('%s: %s %s %s on %s (%d ACE%s)' % (verb, right, 'for' if action == 'grant' else 'revoked from',
+			sid, target, changed, '' if changed == 1 else 's'))
 		return bool(ok)
 
 	async def _modify(self, path, changes, description):

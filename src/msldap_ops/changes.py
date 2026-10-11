@@ -40,6 +40,8 @@ def _short(attribute, values):
 
 def describe(info):
 	"""Compact one-line description of a change (long values and security descriptors shortened)."""
+	if getattr(info, 'label', None):
+		return info.label
 	if info.operation == 'add':
 		return 'add %s' % info.dn
 	if info.operation == 'delete':

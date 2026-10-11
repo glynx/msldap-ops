@@ -86,3 +86,34 @@ def test_grant_idempotent_sends_nothing(capsys):
 	client.modified.clear()
 	assert asyncio.run(c.do_grant(SID, 'genericall')) is True
 	assert client.modified == [] and 'already present' in capsys.readouterr().out
+
+
+def test_change_log_shows_grant_or_revoke():
+	from msldap_ops import changes, hooks
+	log = changes.ChangeLog()
+	hooks.add_listener(log)
+	hooks.set_foreground(hooks.UNMANAGED)
+	client = Client()
+	c = console(client)
+	try:
+		# route the write through the wrapped connection so the hook records it
+		conn_modify = []
+
+		class RecordingClient(Client):
+			async def set_objectacl_by_dn(self, dn, data, flags=None):
+				# emulate the wrapped connection.modify firing write_done with the label
+				from msldap_ops.hooks import WriteInfo, _write_label
+				info = WriteInfo('dc', 'modify', dn, {'nTSecurityDescriptor': [('replace', data)]})
+				self.sd = data
+				log.write_done(info, ('setsd', dn, b'OLD'), None)
+				return True, None
+
+		rc = RecordingClient()
+		c2 = console(rc)
+		asyncio.run(c2.do_grant(SID, 'dcsync'))
+		asyncio.run(c2.do_revoke(SID, 'dcsync'))
+		summaries = [ch.summary for ch in log.changes]
+		assert any(s.startswith('grant dcsync for %s' % SID) for s in summaries)
+		assert any(s.startswith('revoke dcsync for %s' % SID) for s in summaries)
+	finally:
+		hooks.remove_listener(log)

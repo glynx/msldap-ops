@@ -66,6 +66,21 @@ def internal_read():
 		_internal_read -= 1
 
 
+# a human label for the next change, set by a command whose intent the raw modify does not show
+# (e.g. grant/revoke both write nTSecurityDescriptor); the change log shows it instead
+_write_label = None
+
+
+@contextlib.contextmanager
+def labeled(text):
+	global _write_label
+	previous, _write_label = _write_label, text
+	try:
+		yield
+	finally:
+		_write_label = previous
+
+
 class RawValue(LDAPCustomValue):
 	"""Writes raw attribute bytes back verbatim (used to restore the previous value on undo,
 	independent of the attribute's type)."""
@@ -346,6 +361,7 @@ class WriteInfo:
 		self.error = None
 		self.skipped = False
 		self.reason = None  # why it was not sent (set by the gate)
+		self.label = _write_label  # a command's description of this change, if any
 
 	def to_dict(self):
 		return {
