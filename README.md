@@ -12,7 +12,7 @@ Features:
 - **Collection presets** for bofhound, split per object type (users, computers, groups, OUs, GPOs,
   schema, ADCS, ...), so that no single query returns the whole directory.
 
-- **Privileged accounts** (`admins`): recursive members of the protected groups, found by SID, with
+- **Privileged accounts** (`find_admins`): recursive members of the protected groups, found by SID, with
   their risky settings.
 
 - **Extended shell**: all msldap shell commands plus the msldap-ops commands.
@@ -84,7 +84,7 @@ connect to one of their DCs and run `bofhound_collect` again.
 
 ## Privileged accounts
 
-`admins` lists the recursive members of Domain Admins, Enterprise/Schema/Enterprise Key Admins,
+`find_admins` lists the recursive members of Domain Admins, Enterprise/Schema/Enterprise Key Admins,
 Administrators, Account/Server/Print/Backup Operators, Key Admins, Group Policy Creator Owners,
 Domain Controllers and DnsAdmins. Groups are found by SID, so localized names work. Per account:
 
@@ -96,7 +96,7 @@ Domain Controllers and DnsAdmins. Groups are found by SID, so localized names wo
 It also lists `adminCount=1` users that are no longer in any of these groups, and users, computers
 and groups outside the privileged groups whose sAMAccountName, displayName or description contains
 `adm` (catches `admin`, `Administrator`, `adm_` accounts, admin workstations, "SQL Admins", ...).
-`admins <pattern>` uses another pattern, `admins -` skips the name search. Direct members from
+`find_admins <pattern>` uses another pattern, `find_admins -` skips the name search. Direct members from
 other domains (foreign security principals, forest root groups) are shown with their DN. The forest
 root groups can only be listed on a DC of the forest root.
 

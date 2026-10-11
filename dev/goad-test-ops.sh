@@ -106,18 +106,18 @@ AFTER="$(wc -l <"${LOG:-/dev/null}")"
 check_cmd "log off stops logging" test "$BEFORE" -eq "$AFTER"
 
 echo
-echo "== privileged accounts"
-"$OPS" --no-log "$URL" login admins >"$RESULTS/admins-north.txt" 2>&1 || true
-check "Domain Admins found by SID" '^  [^ ].* \(S-1-5-21-[0-9-]+-512\): [1-9][0-9]* accounts$' "$RESULTS/admins-north.txt"
+echo "== privileged accounts (find_admins)"
+"$OPS" --no-log "$URL" login find_admins >"$RESULTS/admins-north.txt" 2>&1 || true
+check "Domain Admins found by SID" '^  [^ ].* \(S-1-5-21-[0-9-]+-512\): [1-9][0-9]* accounts?$' "$RESULTS/admins-north.txt"
 check "eddard.stark is a privileged account" '^  eddard\.stark +user ' "$RESULTS/admins-north.txt"
 check "Enterprise Admins explained on the child domain" 'Enterprise Admins \(S-1-5-21-[0-9-]+-519\): lives in the forest root' "$RESULTS/admins-north.txt"
 check "Administrators lists the forest root group as other-domain member" '\(other domain\) +direct CN=Enterprise Admins,' "$RESULTS/admins-north.txt"
 check "report completes" '^adminCount=1 users outside the privileged groups: [0-9]+$' "$RESULTS/admins-north.txt"
 check_cmd "no error section" bash -c "! grep -q '^Errors:' '$RESULTS/admins-north.txt'"
 
-"$OPS" --no-log "$ROOT_URL" login admins >"$RESULTS/admins-root.txt" 2>&1 || true
-check "Enterprise Admins listed on the forest root" '^  [^ ].* \(S-1-5-21-[0-9-]+-519\): [1-9][0-9]* accounts$' "$RESULTS/admins-root.txt"
-check "Schema Admins listed on the forest root" '^  [^ ].* \(S-1-5-21-[0-9-]+-518\): [0-9]+ accounts$' "$RESULTS/admins-root.txt"
+"$OPS" --no-log "$ROOT_URL" login find_admins >"$RESULTS/admins-root.txt" 2>&1 || true
+check "Enterprise Admins listed on the forest root" '^  [^ ].* \(S-1-5-21-[0-9-]+-519\): [1-9][0-9]* accounts?$' "$RESULTS/admins-root.txt"
+check "Schema Admins listed on the forest root" '^  [^ ].* \(S-1-5-21-[0-9-]+-518\): [0-9]+ accounts?$' "$RESULTS/admins-root.txt"
 check "name search runs" "^Name or description contains 'adm', outside the privileged groups: [0-9]+$" "$RESULTS/admins-north.txt"
 echo "   INFO  $(grep -E "^Name or description contains" "$RESULTS/admins-north.txt" || true)"
 echo "   INFO  findings on north: $(grep -oE '(kerberoastable|asrep-roastable|password-never-expires|unconstrained-delegation|delegable|password-not-required)' "$RESULTS/admins-north.txt" | sort | uniq -c | tr -s ' ' | tr '\n' ';')"

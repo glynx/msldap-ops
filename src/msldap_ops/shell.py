@@ -117,7 +117,7 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 	def _bofhound_collect_completions(self):
 		return WordCompleter(['all'] + list(presets.PRESETS))
 
-	async def do_admins(self, pattern=privileged.DEFAULT_NAME_PATTERN):
+	async def do_find_admins(self, pattern=privileged.DEFAULT_NAME_PATTERN):
 		"""Lists the privileged accounts of the connected domain.
 
 		Shows the recursive members of the protected groups (Domain/Enterprise/Schema Admins,
@@ -125,11 +125,13 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		SID so that localized group names work, together with settings that make them easier
 		to attack: kerberoastable, AS-REP roastable, password never expires, unconstrained
 		delegation, 'delegable' (neither "sensitive and cannot be delegated" nor in Protected
-		Users), disabled. Also lists adminCount=1 users that are no longer in any of the groups.
+		Users), disabled. Also lists adminCount=1 users that are no longer in any of the groups
+		(krbtgt is left out, it has adminCount=1 by design).
 
 		pattern: additionally lists users, computers and groups outside the privileged groups
 		whose sAMAccountName, displayName or description contains it (default: adm, which
-		also matches 'admin' and 'Administrator'). Use '-' to skip the name search.
+		also matches 'admin' and 'Administrator'). Groups without members are left out.
+		Use '-' to skip the name search.
 
 		Groups of the forest root (Enterprise/Schema Admins) can only be listed on a DC of the
 		forest root; on a child domain they are reported with a hint.

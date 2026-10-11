@@ -27,6 +27,9 @@ EDDARD = user('eddard.stark', 1111, servicePrincipalName=['HTTP/x'], adminCount=
 ROBERT = user('robert.baratheon', 1112, uac=0x200 | 0x10000, adminCount=1)
 CATELYN = user('catelyn.stark', 1113, uac=0x200 | 0x100000)
 OLD = user('old.admin', 1120, adminCount=1)
+KRBTGT = user('krbtgt', 502, uac=0x202, adminCount=1, servicePrincipalName=['kadmin/changepw'])
+EMPTY = obj('CN=Storage Replica Administrators,CN=Builtin,' + BASE, sAMAccountName='Storage Replica Administrators',
+	objectSid='S-1-5-32-582', objectClass=['top', 'group'])
 SVC = user('svc-sql', 1130, servicePrincipalName=['MSSQLSvc/db'], description='SQL admin service account')
 SQLADMINS = obj('CN=SQL Admins,CN=Users,' + BASE, sAMAccountName='SQL Admins', objectSid='%s-1131' % DOM,
 	objectClass=['top', 'group'], member=[SVC['objectName'], CATELYN['objectName']])
@@ -74,10 +77,10 @@ class FakeClient:
 			# msldap returns securityIdentifier as raw bytes
 			results = [obj('CN=sevenkingdoms.local,CN=System,' + BASE, securityIdentifier=SID.from_string(ROOT).to_bytes())]
 		elif query.startswith('(&(adminCount=1)'):
-			results = [EDDARD, ROBERT, OLD]
+			results = [EDDARD, ROBERT, OLD, KRBTGT]
 		elif '(sAMAccountName=*adm*)' in query:
 			# already listed objects come back as well and must be skipped
-			results = [SVC, SQLADMINS, ADMWKS, OLD, GROUPS['%s-512' % DOM]]
+			results = [SVC, SQLADMINS, ADMWKS, OLD, GROUPS['%s-512' % DOM], EMPTY]
 		for r in results:
 			yield r, None
 
@@ -107,9 +110,11 @@ async def test_collect_privileged_accounts():
 	assert accounts['robert.baratheon'].findings() == ['password-never-expires']  # Protected Users
 	assert accounts['catelyn.stark'].findings() == []  # sensitive, cannot be delegated
 	assert accounts['WINTERFELL$'].findings() == []  # DCs have unconstrained delegation by design
+	# krbtgt has adminCount=1 by design
 	assert [a.name for a in report.orphaned] == ['old.admin']
 
 	matches = {m.account.name: m for m in report.name_matches}
+	# groups without members are left out
 	assert set(matches) == {'svc-sql', 'SQL Admins', 'ADMWKS01$'}
 	assert matches['svc-sql'].fields == ['description']
 	assert matches['svc-sql'].account.findings() == ['kerberoastable', 'delegable']
@@ -133,12 +138,13 @@ def test_name_search_filter_escapes_the_pattern():
 
 async def test_report_and_command(capsys):
 	console = MSLDAPOpsConsole(None)
-	assert await console.do_admins() is False
+	assert await console.do_find_admins() is False
 	console.connection = FakeClient()
-	assert await console.do_admins() is True
+	assert await console.do_find_admins() is True
 	out = capsys.readouterr().out
 	assert 'Domänen-Admins (S-1-5-21-1-2-3-512): 2 accounts' in out
 	assert 'Administrators (S-1-5-32-544): 3 accounts' in out
+	assert 'Domain Controllers (S-1-5-21-1-2-3-516): 1 account\n' in out
 	assert 'Privileged accounts: 4' in out
 	assert 'eddard.stark' in out and 'kerberoastable, delegable' in out
 	assert 'pwdLastSet 2026-04-21' in out
@@ -152,3 +158,10 @@ def test_root_groups_without_root_sid():
 	sids = dict(privileged.group_sids(DOM, None))
 	assert sids['Enterprise Admins'] is None
 	assert sids['Domain Admins'] == DOM + '-512'
+
+
+def test_table_aligns_long_names():
+	lines = privileged.table([['Network Configuration Operators', 'group', 'description', '3 members'], ['svc', 'user', 'sAMAccountName', '']], 2)
+	assert lines[0].index('group') == lines[1].index('user')
+	assert lines[0].index('description') == lines[1].index('sAMAccountName')
+	assert lines[1] == lines[1].rstrip()

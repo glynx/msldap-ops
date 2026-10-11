@@ -17,11 +17,11 @@
 - [x] Verify `bofhound_collect` against GOAD (`dev/goad-test-ops.sh`)
 - [ ] `bofhound_collect` for other domains of the forest / trusted forests in one go (second connection or GC)
 - [x] Privileged accounts: `adminCount=1`, recursive members of the protected groups via
-      `LDAP_MATCHING_RULE_IN_CHAIN`, groups resolved by RID/SID (localized names, e.g. "Domänen-Admins") -> `admins`
+      `LDAP_MATCHING_RULE_IN_CHAIN`, groups resolved by RID/SID (localized names, e.g. "Domänen-Admins") -> `find_admins`
 - [x] Admins with SPN, admins not in Protected Users / not "sensitive", admins with
       `PASSWORD_NEVER_EXPIRES`
-- [ ] Verify `admins` against GOAD (`dev/goad-test-ops.sh`)
-- [ ] `admins` across the forest: resolve forest root group members via a second connection or the GC
+- [ ] Verify `find_admins` against GOAD (`dev/goad-test-ops.sh`)
+- [ ] `find_admins` across the forest: resolve forest root group members via a second connection or the GC
 
 ## Navigation
 

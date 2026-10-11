@@ -149,6 +149,11 @@ class Account:
 		return result
 
 
+def is_krbtgt(account):
+	"""krbtgt (and the RODC krbtgt_<n> accounts) always have adminCount=1 and an SPN, by design."""
+	return account.sid.endswith('-502') or account.name.lower().startswith('krbtgt_')
+
+
 def _date(value):
 	if isinstance(value, datetime.datetime) and value.year > 1601:
 		return value
@@ -289,9 +294,10 @@ async def collect(client, name_pattern=DEFAULT_NAME_PATTERN):
 	orphaned = []
 	for entry in await _search(client, '(&(adminCount=1)(sAMAccountType=%d))' % SAM_USER, USER_ATTRIBUTES, errors):
 		account = Account.from_entry(entry)
-		if account.dn.lower() not in accounts:
-			account.protected_user = account.sid in protected
-			orphaned.append(account)
+		if account.dn.lower() in accounts or is_krbtgt(account):
+			continue
+		account.protected_user = account.sid in protected
+		orphaned.append(account)
 
 	report = Report(domain_dn, groups, accounts, orphaned, errors=errors)
 	if name_pattern:
@@ -303,9 +309,12 @@ async def collect(client, name_pattern=DEFAULT_NAME_PATTERN):
 			account = Account.from_entry(entry)
 			if account.dn.lower() in known:
 				continue
+			members = len(as_list(attr(entry, 'member')))
+			if account.kind == 'group' and members == 0:
+				continue
 			account.protected_user = account.sid in protected
 			fields = [a for a in NAME_SEARCH_ATTRIBUTES if any(name_pattern.lower() in str(v).lower() for v in as_list(attr(entry, a)))]
-			report.name_matches.append(NameMatch(account, fields, len(as_list(attr(entry, 'member')))))
+			report.name_matches.append(NameMatch(account, fields, members))
 	return report
 
 
@@ -318,6 +327,18 @@ def _when(value):
 	return value.strftime('%Y-%m-%d') if value else 'never'
 
 
+def table(rows, indent):
+	"""Aligns the columns of rows (lists of strings); the last column is not padded."""
+	if not rows:
+		return []
+	widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]) - 1)]
+	lines = []
+	for row in rows:
+		cells = [cell.ljust(width) for cell, width in zip(row, widths)] + [row[-1]]
+		lines.append((' ' * indent + '  '.join(cells)).rstrip())
+	return lines
+
+
 def format_report(report):
 	lines = ['Privileged groups in %s' % report.domain_dn]
 	for group in report.groups:
@@ -328,32 +349,33 @@ def format_report(report):
 			lines.append('%s: %s' % (header, group.note))
 			continue
 		members = [m for m in group.members if m.kind != 'group']
-		lines.append('%s: %d accounts' % (header, len(members)))
-		for member in sorted(group.members, key=lambda m: (m.kind == 'group', m.name.lower())):
-			lines.append('    %-24s %-8s %-6s %s' % (member.name, member.kind, member.groups[group.name], ', '.join(member.findings())))
-		for dn in group.foreign:
-			lines.append('    %-24s %-8s %-6s %s' % ('(other domain)', '', 'direct', dn))
+		lines.append('%s: %d account%s' % (header, len(members), '' if len(members) == 1 else 's'))
+		rows = [[m.name, m.kind, m.groups[group.name], ', '.join(m.findings())]
+			for m in sorted(group.members, key=lambda m: (m.kind == 'group', m.name.lower()))]
+		rows += [['(other domain)', '', 'direct', dn] for dn in group.foreign]
+		lines.extend(table(rows, 4))
 
 	people = sorted((a for a in report.accounts.values() if a.kind != 'group'), key=lambda a: a.name.lower())
 	lines.append('')
 	lines.append('Privileged accounts: %d' % len(people))
-	for account in people:
-		lines.append('  %-24s %-8s pwdLastSet %-10s lastLogon %-10s %s' % (
-			account.name, account.kind, _when(account.pwdlastset), _when(account.lastlogon), ', '.join(account.findings())))
+	rows = [[a.name, a.kind, 'pwdLastSet ' + _when(a.pwdlastset), 'lastLogon ' + _when(a.lastlogon), ', '.join(a.findings())] for a in people]
+	for line, account in zip(table(rows, 2), people):
+		lines.append(line)
 		lines.append('    in: %s' % ', '.join(sorted(account.groups)))
 
 	lines.append('')
 	lines.append('adminCount=1 users outside the privileged groups: %d' % len(report.orphaned))
-	for account in sorted(report.orphaned, key=lambda a: a.name.lower()):
-		lines.append('  %-24s %s' % (account.name, ', '.join(account.findings())))
+	lines.extend(table([[a.name, ', '.join(a.findings())] for a in sorted(report.orphaned, key=lambda a: a.name.lower())], 2))
 
 	if report.name_pattern:
 		lines.append('')
 		lines.append("Name or description contains '%s', outside the privileged groups: %d" % (report.name_pattern, len(report.name_matches)))
+		rows = []
 		for match in sorted(report.name_matches, key=lambda m: (m.account.kind, m.account.name.lower())):
 			a = match.account
 			details = '%d members' % match.members if a.kind == 'group' else ', '.join(a.findings())
-			lines.append('  %-24s %-8s %-28s %s' % (a.name, a.kind, ','.join(match.fields), details))
+			rows.append([a.name, a.kind, ','.join(match.fields), details])
+		lines.extend(table(rows, 2))
 
 	if report.errors:
 		lines.append('')
