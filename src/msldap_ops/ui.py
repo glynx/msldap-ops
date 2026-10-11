@@ -176,13 +176,18 @@ def render(line, width=None):
 
 
 class StyledStream(io.TextIOBase):
-	"""Line buffered stdout wrapper that colors every complete line."""
+	"""Line buffered stdout wrapper that colors every complete line (and copies the plain text to
+	the session transcript, if one is running)."""
 
 	def __init__(self, target):
 		self.target = target
 		self._buf = ''
+		self.tee = True  # copy to the transcript; off for an inner stream of a stacked pair
 
 	def write(self, data):
+		from msldap_ops import transcript
+		if self.tee and transcript.active() is not None:
+			transcript.active().output(data)
 		if not enabled():
 			return self.target.write(data)
 		self._buf += data

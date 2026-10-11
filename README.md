@@ -269,6 +269,20 @@ find_admins >> report.txt
 The file gets plain text. Opsec queries and questions stay on the screen, so `opsec confirm` works
 while redirecting.
 
+The whole session can be written to a file as well, each command with a timestamp followed by its
+output (plain text, including the queries shown by `opsec` and the answers to its questions):
+
+```text
+transcript on [file]      start, default ./msldap-ops-transcript_<date>.log (appended)
+transcript off            stop
+transcript                state and file
+msldap-ops --transcript [file] ...   from the start
+```
+
+Commands with secrets (`login` with a password or hash in the URL, `changeuserpw`, `adduser`,
+`addcomputer` with a password) are recorded without arguments. Output redirected with `> file` is
+not repeated in the transcript.
+
 ## Differences to msldap
 
 msldap-ops keeps msldap's commands, but changes some where msldap's behaviour is not what a shell

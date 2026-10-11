@@ -9,13 +9,15 @@
 - [x] Verify the query log against GOAD (`dev/goad-test-ops.sh`)
 - [x] SD flags control by default when `nTSecurityDescriptor` is requested (`query` in the fork)
 - [ ] Optional per-query output file (like pyldapsearch `-output`)
+- [x] Session transcript (`transcript on|off`, `--transcript [file]`)
 
 ## Presets
 
 - [x] bofhound collection split per object type: users, computers, groups, domain, OUs,
       containers, GPOs, trusts, schema (`schemaIDGUID`), ADCS (Configuration NC) -> `bofhound_collect`
 - [x] Verify `bofhound_collect` against GOAD (`dev/goad-test-ops.sh`)
-- [ ] `bofhound_collect` for other domains of the forest / trusted forests in one go (second connection or GC)
+- [ ] `bofhound_collect` for other domains of the forest / trusted forests in one go (second connection
+      or the Global Catalog, port 3268/3269: a partial replica of every domain of the forest)
 - [x] Privileged accounts: `adminCount=1`, recursive members of the protected groups via
       `LDAP_MATCHING_RULE_IN_CHAIN`, groups resolved by RID/SID (localized names, e.g. "Domänen-Admins") -> `find_admins`
 - [x] Admins with SPN, admins not in Protected Users / not "sensitive", admins with
@@ -30,6 +32,10 @@
 - [x] Verify against GOAD (`dev/goad-test-ops.sh`)
 - [ ] Try `confirm` interactively
 - [ ] Optional jitter for `bofhound_collect` delays
+- [ ] Writing operations (add/modify/delete, msldap's addusertogroup, setsd, changeuserpw, ...) are
+      neither shown nor confirmed by `opsec`, and `dryrun` sends them; gate them like searches
+- [ ] Review which writing commands are missing for daily work (granting rights such as
+      GenericAll/WriteDacl/DCSync on an object, owner changes, shadow credentials cleanup, ...)
 
 ## Navigation
 
@@ -44,6 +50,13 @@
 - [ ] Verify navigation against GOAD (`dev/goad-test-ops.sh`), try the completion interactively
 - [ ] `map` as a toolbar below the prompt (optional)
 
+## Enumeration
+
+- [ ] Delegation overview (unconstrained, constrained with/without protocol transition, RBCD), with
+      a filter for single kinds
+- [ ] LAPS in both versions: legacy (`ms-Mcs-AdmPwd`) and Windows LAPS (`msLAPS-Password`,
+      `msLAPS-EncryptedPassword`, expiration), who can read it
+
 ## ADCS
 
 - [x] Template output like certipy: decoded `msPKI-Certificate-Name-Flag`, `msPKI-Enrollment-Flag`,
@@ -52,6 +65,7 @@
 - [x] Verify `templates` against GOAD (`dev/goad-test-ops.sh`)
 - [ ] CA level checks (ESC6 EDITF_ATTRIBUTESUBJECTALTNAME2, ESC7 CA permissions, ESC8 web enrollment)
       need the CA registry/RPC, not LDAP; at least list the CA permissions from LDAP
+- [ ] List the CA permissions (ESC7) from LDAP
 - [ ] Cross-domain / cross-forest checks (`adcs-check [DOMAIN\user]`): take the token groups from
       the user's own domain and map them to foreign security principals in the target forest,
       so that e.g. NORTH\jon.snow can be checked against the ESSOS CA. Same-forest users of

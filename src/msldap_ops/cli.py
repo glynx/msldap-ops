@@ -9,19 +9,23 @@ from asyauth import logger as authlogger
 from asysocks import logger as sockslogger
 from msldap import logger as msldaplogger
 
-from msldap_ops import __version__, hooks, ui
+from msldap_ops import __version__, hooks, transcript, ui
 from msldap_ops.cache import DEFAULT_CACHE_DIR, DEFAULT_TTL, QueryCache
 from msldap_ops.history import default_path as default_history_path
 from msldap_ops.opsec import OpsecGate
 from msldap_ops.querylog import DEFAULT_LOG_DIR, QueryLog
 from msldap_ops.shell import MSLDAPOpsConsole
+from msldap_ops.transcript import DEFAULT_PREFIX as TRANSCRIPT_PREFIX
+from msldap_ops.transcript import default_path as default_transcript_path
 
 
 async def amain(args):
 	if args.no_color:
 		ui.set_enabled(False)
-	if ui.enabled():
-		sys.stdout = ui.StyledStream(sys.stdout)
+	# colors (if enabled) and the session transcript
+	sys.stdout = ui.StyledStream(sys.stdout)
+	if args.transcript:
+		transcript.start(args.transcript)
 	hooks.install()
 	querylog = None
 	if not args.no_log:
@@ -73,6 +77,8 @@ def main():
 	parser.add_argument('--no-cache', action='store_true', help='Disable the query cache')
 	parser.add_argument('--history-file', default=default_history_path(), help='Command history across sessions. Default: %(default)s')
 	parser.add_argument('--no-history', action='store_true', help='Keep the command history for this session only')
+	parser.add_argument('--transcript', nargs='?', const=default_transcript_path(), metavar='FILE',
+		help='Write the session (commands and output) to FILE. Default file: ./%s_<date>.log' % TRANSCRIPT_PREFIX)
 	parser.add_argument('--no-color', action='store_true', help='Plain output without colors (also: NO_COLOR environment variable)')
 	parser.add_argument('url', help='Connection string in msldap URL format')
 	parser.add_argument('commands', nargs='*', help="Commands to run in order. 'i' drops into the interactive shell. Without commands the shell starts after login.")
@@ -85,7 +91,11 @@ def main():
 			lg.setLevel(logging.DEBUG)
 		logging.basicConfig(level=logging.DEBUG)
 
-	raise SystemExit(asyncio.run(amain(args)))
+	try:
+		code = asyncio.run(amain(args))
+	finally:
+		transcript.stop()
+	raise SystemExit(code)
 
 
 if __name__ == '__main__':

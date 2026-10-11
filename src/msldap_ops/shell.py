@@ -17,6 +17,7 @@ from prompt_toolkit.patch_stdout import patch_stdout
 
 from msldap_ops import acl, hooks, navigation, opsec, presets, privileged, records, templates, ui
 from msldap_ops import history as command_history
+from msldap_ops import transcript
 
 
 def split_redirect(args):
@@ -83,6 +84,11 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		if command_history.fzf_available():
 			command_history.add_fzf_binding(bindings, history)
 		self.session = PromptSession(enable_history_search=True, key_bindings=bindings, history=history)
+		# the stream below prompt_toolkit's proxy (set up by the CLI) must not copy to the transcript
+		# again, the stream on top of the proxy does
+		inner = sys.stdout if isinstance(sys.stdout, ui.StyledStream) else None
+		if inner is not None:
+			inner.tee = False
 		try:
 			with patch_stdout(raw=True):
 				proxy = sys.stdout
@@ -92,6 +98,8 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 				finally:
 					sys.stdout = proxy
 		finally:
+			if inner is not None:
+				inner.tee = True
 			if self._ignore_sigint and sys.platform != 'win32':
 				asyncio.get_event_loop().remove_signal_handler(signal.SIGINT)
 			self._on_close()
@@ -139,6 +147,8 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		self.keepalive = keepalive
 
 	async def _run_single_command(self, command, args):
+		if transcript.active() is not None:
+			transcript.active().command(self._current_dn, command, args)
 		try:
 			args, path, append = split_redirect(args)
 		except ValueError as e:
@@ -280,6 +290,42 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 
 	def _opsec_completions(self):
 		return WordCompleter(list(opsec.MODES))
+
+	async def do_transcript(self, action=None, path=None):
+		"""Writes the session to a file: every command with a timestamp and its output (plain text).
+
+		transcript                 state and file
+		transcript on [file]       start (default: ./msldap-ops-transcript_<date>.log, appended)
+		transcript off             stop
+		Commands with secrets (login with a password in the URL, changeuserpw, ...) are recorded
+		without arguments. Output redirected with '> file' is not repeated in the transcript.
+		Also --transcript [file] on the command line.
+		"""
+		current = transcript.active()
+		if action is None:
+			print('transcript: %s' % ('on, %s' % current.path if current else 'off'))
+			return True
+		if action == 'on':
+			try:
+				started = transcript.start(os.path.expanduser(path) if path else transcript.default_path())
+			except OSError as e:
+				print('Cannot write the transcript: %s' % e)
+				return False
+			print('transcript: on, %s' % started.path)
+			return True
+		if action == 'off':
+			if current is None:
+				print('transcript: off')
+				return True
+			path = current.path
+			transcript.stop()
+			print('transcript: off (written to %s)' % path)
+			return True
+		print("Unknown action '%s', expected on or off" % action)
+		return False
+
+	def _transcript_completions(self):
+		return WordCompleter(['on', 'off'])
 
 	async def do_log(self, action=None):
 		"""Shows or switches the bofhound query log.

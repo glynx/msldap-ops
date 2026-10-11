@@ -56,7 +56,11 @@ async def default_ask(text):
 	from msldap_ops import ui
 	# while the command output goes to a file, the question must still reach the terminal
 	session = PromptSession(output=create_output(stdout=sys.__stdout__)) if ui.terminal() is not sys.stdout else PromptSession()
-	return await session.prompt_async(FormattedText([('bold', text)]) if ui.enabled() else text)
+	answer = await session.prompt_async(FormattedText([('bold', text)]) if ui.enabled() else text)
+	from msldap_ops import transcript
+	if transcript.active() is not None:
+		transcript.active().answer(text, answer)
+	return answer
 
 
 def default_out(line):
