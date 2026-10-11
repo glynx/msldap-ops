@@ -72,6 +72,8 @@ collect all 5               wait 5 seconds between queries
 collect dns                 DNS nodes (computer IP addresses), not part of 'all'
 ```
 
+bofhound evaluates DNS nodes since version 0.4.21; older versions list them as unknown objects.
+
 Presets: `domain`, `users`, `computers` (including gMSAs and trust accounts), `groups`, `ous`,
 `containers`, `gpos`, `trusts`, `fsps`, `schema`, `adcs` (enterprise CAs, root/AIA CAs, NTAuth store,
 templates, issuance policies), `partitions` (NetBIOS names) and `dns`. Base DNs are taken from the

@@ -100,7 +100,10 @@ check_cmd "log off stops logging" test "$BEFORE" -eq "$AFTER"
 
 echo
 echo "== bofhound import"
-(cd "$RESULTS" && uvx bofhound -i "$LOGS" -o "$RESULTS/bofhound" >"$RESULTS/bofhound.txt" 2>&1) || true
+# dnsNode parsing needs bofhound >= 0.4.21; without a version uvx may reuse an older cached one
+BOFHOUND=(uvx --from 'bofhound>=0.4.21' bofhound)
+echo "   bofhound $("${BOFHOUND[@]:0:3}" python -c 'import importlib.metadata as m; print(m.version("bofhound"))' 2>/dev/null || echo '?')"
+(cd "$RESULTS" && "${BOFHOUND[@]}" -i "$LOGS" -o "$RESULTS/bofhound" >"$RESULTS/bofhound.txt" 2>&1) || true
 parsed() { grep -oE "Parsed [0-9]+ $1" "$RESULTS/bofhound.txt" | grep -oE '[0-9]+' | head -n 1; }
 for kind in Users Groups Computers Domains "Trust Accounts" OUs Containers GPOs "Enterprise CAs" \
   "AIA CAs" "Root CAs" "NTAuth Stores" "Cert Templates" Schemas Referrals "DNS nodes"; do
