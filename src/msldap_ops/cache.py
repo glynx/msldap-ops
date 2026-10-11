@@ -176,6 +176,7 @@ class QueryCache:
 		self.dns = {}  # lowercased DN -> [DN, last seen ts]
 		self.hits = 0
 		self.misses = 0
+		self.last_stored = None  # when the result of the last hit was stored
 		self._dirty = False
 
 	# --- target -------------------------------------------------------------
@@ -240,11 +241,13 @@ class QueryCache:
 		item = self.queries.get(key)
 		if item is not None and now - item['stored'] <= self.ttl:
 			self.hits += 1
+			self.last_stored = item['stored']
 			return [raw_from_json(e) for e in item['entries']]
 		if parts is not None:
 			for item in self.queries.values():
 				if now - item['stored'] <= self.ttl and covers(item['query'], parts):
 					self.hits += 1
+					self.last_stored = item['stored']
 					return [project(raw_from_json(e), parts) for e in item['entries'] if _dn_under(e['dn'].lower(), parts['base'])]
 		self.misses += 1
 		return None

@@ -24,8 +24,13 @@ def value_str(name, value):
 	return str(value)
 
 
-def record_lines(dn, attributes):
-	lines = ['---', 'DN: %s' % dn]
+def cached_note(stored):
+	"""Suffix for output that comes from the query cache; stored: datetime or None."""
+	return '  (from the cache, %s)' % stored.strftime('%Y-%m-%d %H:%M') if stored is not None else ''
+
+
+def record_lines(dn, attributes, cached_at=None):
+	lines = ['---', 'DN: %s%s' % (dn, cached_note(cached_at))]
 	if not attributes:
 		lines.append('  (no attributes returned)')
 		return lines
@@ -64,5 +69,5 @@ def search_error(err, base):
 	return 'Search failed (%s): %s' % (name, ' '.join(diag.split()))
 
 
-def count_line(n):
-	return '(%d object%s)' % (n, '' if n == 1 else 's')
+def count_line(n, cached_at=None):
+	return '(%d object%s)%s' % (n, '' if n == 1 else 's', cached_note(cached_at))

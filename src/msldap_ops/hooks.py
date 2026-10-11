@@ -79,6 +79,7 @@ class QueryInfo:
 		self.background = _is_background()
 		self.skipped = False
 		self.cached = False
+		self.cached_at = None  # datetime the cached result was stored
 
 	def to_dict(self):
 		return {
@@ -202,6 +203,8 @@ def _wrap_search(original, controls_param, passthrough=None):
 			raws = _cache.get(key, parts)
 			if raws is not None:
 				info.cached = True
+				if _cache.last_stored is not None:
+					info.cached_at = datetime.datetime.fromtimestamp(_cache.last_stored)
 				if _gate is not None and hasattr(_gate, 'cached'):
 					_gate.cached(info)
 				_notify('query_start', info)

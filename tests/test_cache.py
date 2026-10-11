@@ -295,3 +295,37 @@ async def test_templates_after_bofhound_collect_come_from_the_cache(cached):
 	await collect(client.pagedsearch('(objectClass=pKIEnrollmentService)', templates.CA_ATTRIBUTES, tree='CN=Enrollment Services,' + pki))
 	await collect(client.pagedsearch('(objectClass=pKICertificateTemplate)', templates.TEMPLATE_ATTRIBUTES, controls=[templates.sd_flags_control()], tree='CN=Certificate Templates,' + pki))
 	assert conn.server_calls == calls
+
+
+async def test_cached_results_are_marked_in_the_output(cached, capsys):
+	from msldap_ops.shell import SearchWatch
+
+	conn = CountingConnection([raw_entry()])
+	watch = SearchWatch()
+	hooks.add_listener(watch)
+	try:
+		await search(conn)
+		assert watch.cached_at is None  # live
+		await search(conn)
+		assert watch.cached_at is not None and conn.server_calls == 1
+	finally:
+		hooks.remove_listener(watch)
+
+
+def test_cache_note_layout_and_style():
+	import datetime
+
+	from msldap_ops import records, ui
+	stored = datetime.datetime(2026, 10, 11, 19, 42)
+	assert records.count_line(3, stored) == '(3 objects)  (from the cache, 2026-10-11 19:42)'
+	assert records.record_lines('CN=x', {'cn': 'x'}, stored)[1] == 'DN: CN=x  (from the cache, 2026-10-11 19:42)'
+	assert records.count_line(1) == '(1 object)'
+
+	def spans(line):
+		text = ui.styled(line)
+		return [(line[s.start:s.end], str(s.style)) for s in text.spans]
+
+	assert spans('DN: CN=x  (from the cache, 2026-10-11 19:42)') == [
+		('DN: CN=x', 'bold cyan'), ('  (from the cache, 2026-10-11 19:42)', 'bright_black')]
+	assert ('ACL of DC=x', 'bold') in spans('ACL of DC=x  (from the cache, 2026-10-11 19:42)')
+	assert spans('ACL of DC=x') == [('ACL of DC=x', 'bold')]

@@ -45,6 +45,17 @@ def sd_flags_control():
 EXIT = object()
 
 
+
+class SearchWatch:
+	"""Hook listener that notes whether the search of a command came from the query cache."""
+
+	def __init__(self):
+		self.cached_at = None
+
+	def query_start(self, query):
+		if not query.background:
+			self.cached_at = query.cached_at if query.cached else None
+
 class MSLDAPOpsConsole(MSLDAPClientConsole):
 	"""msldap shell with additional msldap-ops commands. All msldap commands remain available."""
 
@@ -728,17 +739,26 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 
 	async def _print_objects(self, query, attrs, base, scope, count=True):
 		controls = [sd_flags_control()] if any(a.lower() == 'ntsecuritydescriptor' for a in attrs) else None
-		n = 0
-		async for entry, err in self.connection.pagedsearch(query, attrs, controls=controls, tree=base, search_scope=scope):
-			if err is not None:
-				print(records.search_error(err, base))
-				if scope == BASE and self._current_dn and navigation.is_under(base, self._current_dn) and base.lower() != (self._current_dn or '').lower():
-					print('  (relative names are resolved below the current DN, use .. or an absolute DN)')
-				return False
-			n += 1
-			ui.emit(records.record_lines(entry['objectName'], entry['attributes']))
+		n, error = 0, None
+		search = SearchWatch()
+		hooks.add_listener(search)
+		try:
+			async for entry, err in self.connection.pagedsearch(query, attrs, controls=controls, tree=base, search_scope=scope):
+				if err is not None:
+					error = err
+					break
+				n += 1
+				# a single object (cat) gets the cache note at its DN, several at the count line
+				ui.emit(records.record_lines(entry['objectName'], entry['attributes'], None if count else search.cached_at))
+		finally:
+			hooks.remove_listener(search)
+		if error is not None:
+			print(records.search_error(error, base))
+			if scope == BASE and self._current_dn and navigation.is_under(base, self._current_dn) and base.lower() != self._current_dn.lower():
+				print('  (relative names are resolved below the current DN, use .. or an absolute DN)')
+			return False
 		if count:
-			ui.out(records.count_line(n))
+			ui.out(records.count_line(n, search.cached_at))
 		else:
 			ui.out('')
 		return True

@@ -250,7 +250,8 @@ queries are not shown or confirmed and not written to the bofhound log, only to 
 The prompt (`msldap-ops <DN> >`) is colored so that it stands out from the command output. All output,
 including the msldap built-in commands, keeps its plain text layout and gets colors on top. `query`
 and `cat` show every object with a separator line, its DN and aligned attribute names, values of
-multi-valued attributes below each other (`query` ends with the number of objects); DN and attribute
+multi-valued attributes below each other (`query` ends with the number of objects). Results from the
+query cache say so in gray: `(from the cache, <time>)` at the DN (`cat`) or the count (`query`, `cat *`); DN and attribute
 names are colored, findings and `[!]` marks are red, `delegable` yellow, the queries shown by `opsec`
 gray. On the terminal long lines wrap at the value column, and a long DN in the prompt is shortened
 (`CN=x,...,DC=essos,DC=local`). Without a terminal (pipes, files) the output is plain text without

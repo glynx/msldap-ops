@@ -37,16 +37,17 @@ RULES = [
 	(r'^send\? .*$', 'bold'),
 	(r'^(Privileged groups in|Privileged accounts:|adminCount=1 users|Name or description contains|Template |Errors:).*$', 'bold'),
 	(r'^  (Permissions|\[!\] Vulnerabilities.*)$', 'bold'),
-	(r'^ACL of .*$', 'bold'),
+	(r'^ACL of .*?(?=  \(from the cache, |$)', 'bold'),
 	(r'^  Access +Principal +Rights +Object +Applies to$', 'bold'),
 	(r'^  deny\b', 'yellow'),
 	(r'^Note: .*$', 'yellow'),
 	(r'^WARNING: .*$', 'bold yellow'),
 	# records of msldap's query command
-	(r'^DN: .*$', 'bold cyan'),
+	(r'^DN: .*?(?=  \(from the cache, |$)', 'bold cyan'),
 	(r'^Attributes:$', 'bright_black'),
 	(r'^  [A-Za-z][\w;-]*:(?= |$)', 'blue'),
-	(r'^\(\d+ objects?\)$', 'bright_black'),
+	(r'^\(\d+ objects?\)', 'bright_black'),
+	(r'  \(from the cache, [^)]*\)$', 'bright_black'),
 	(r'^    - ', 'bright_black'),
 ]
 # lines that end a record (msldap's query prints '---') and lines that start one

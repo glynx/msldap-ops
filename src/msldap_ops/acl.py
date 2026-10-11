@@ -343,7 +343,8 @@ def blocks(entries_rows, indent='  ', width=None):
 def format_acl(dn, sd, entries, principals, source=None, show='all', width=None):
 	lines = ['ACL of %s' % dn]
 	if source is not None:
-		lines[0] += '  (from the cache, %s)' % source.strftime('%Y-%m-%d %H:%M')
+		from msldap_ops.records import cached_note
+		lines[0] += cached_note(source)
 	owner = str(sd.Owner) if sd.Owner is not None else None
 	if owner:
 		mark = '  %s owner is not privileged (can rewrite the DACL)' % MARK if not is_privileged(owner) else ''
