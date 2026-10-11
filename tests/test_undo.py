@@ -167,3 +167,17 @@ def test_changes_and_undo_commands(capsys):
 	assert 'No change that can be undone' in capsys.readouterr().out
 	# a bad index
 	assert asyncio.run(console.do_undo('9')) is False
+
+
+def test_summary_shortens_security_descriptor_and_long_values():
+	from msldap_ops import changes
+
+	class Info:
+		operation = 'modify'
+		dn = 'CN=g,DC=x'
+		changes = [('replace', 'nTSecurityDescriptor', ['O:' + 'A' * 500])]
+
+	assert changes.describe(Info()) == 'modify CN=g,DC=x: replace nTSecurityDescriptor=<security descriptor>'
+	Info.changes = [('add', 'description', ['x' * 200])]
+	line = changes.describe(Info())
+	assert line.endswith('...') and len(line) < 120

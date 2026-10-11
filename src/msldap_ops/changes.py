@@ -27,16 +27,25 @@ class Change:
 		return self.undo is not None and not self.undone
 
 
+SUMMARY_VALUE = 48
+
+
+def _short(attribute, values):
+	if attribute.lower() == 'ntsecuritydescriptor':
+		return '<security descriptor>'
+	if not values:
+		return '(all)'
+	text = '; '.join(values)
+	return text if len(text) <= SUMMARY_VALUE else text[:SUMMARY_VALUE] + '...'
+
+
 def describe(info):
-	"""One-line description of a change."""
+	"""Compact one-line description of a change (long values and security descriptors shortened)."""
 	if info.operation == 'add':
 		return 'add %s' % info.dn
 	if info.operation == 'delete':
 		return 'delete %s' % info.dn
-	parts = []
-	for op, attribute, values in info.changes:
-		shown = '; '.join(values) if values else '(all)'
-		parts.append('%s %s=%s' % (op, attribute, shown))
+	parts = ['%s %s=%s' % (op, attribute, _short(attribute, values)) for op, attribute, values in info.changes]
 	return 'modify %s: %s' % (info.dn, ', '.join(parts))
 
 
