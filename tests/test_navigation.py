@@ -144,3 +144,35 @@ def test_split_glob():
 	assert split_glob('CN=a(b)*') == ('.', '(CN=a\\28b\\29*)')
 	# only the last element may be a pattern
 	assert split_glob('CN=x,OU=*') is None
+
+
+def test_find(capsys):
+	import asyncio
+
+	from msldap_ops.shell import MSLDAPOpsConsole
+
+	class Client:
+		_tree = 'DC=x'
+		_serverinfo = {'namingContexts': ['DC=x', 'CN=Configuration,DC=x']}
+		calls = []
+
+		async def pagedsearch(self, query, attributes, controls=None, tree=None, search_scope=2):
+			self.calls.append((query, tree, search_scope))
+			yield {'objectName': 'CN=jaime.lannister,OU=Crownlands,DC=x',
+				'attributes': {'objectClass': ['top', 'person', 'organizationalPerson', 'user'], 'sAMAccountName': 'jaime.lannister'}}, None
+			yield {'objectName': 'CN=ESC4,CN=Certificate Templates,CN=Configuration,DC=x',
+				'attributes': {'objectClass': ['top', 'pKICertificateTemplate']}}, None
+
+	console = MSLDAPOpsConsole(None)
+	console.connection = Client()
+	console._current_dn = 'OU=Crownlands,DC=x'
+	assert asyncio.run(console.do_find('jaime*')) is True
+	assert console.connection.calls[-1] == ('(|(sAMAccountName=jaime*)(name=jaime*))', 'DC=x', 2)
+	assert capsys.readouterr().out == (
+		'pKICertificateTemplate  -                CN=ESC4,CN=Certificate Templates,CN=Configuration,DC=x\n'
+		'user                    jaime.lannister  CN=jaime.lannister,OU=Crownlands,DC=x\n'
+		'(2 objects)\n')
+	# in the Configuration NC it searches there; special characters are escaped
+	console._current_dn = 'CN=Services,CN=Configuration,DC=x'
+	assert asyncio.run(console.do_find('a(b)')) is True
+	assert console.connection.calls[-1] == ('(|(sAMAccountName=a\\28b\\29)(name=a\\28b\\29))', 'CN=Configuration,DC=x', 2)

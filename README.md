@@ -142,6 +142,8 @@ ls [path|pattern] [full] children of the current DN (no query) or of a path, e.g
 cat [path] [attributes]  attributes of the current object (cat, cat .), of every child (cat *),
                          of matching children (cat CN=Domain*, cat ../OU=*) or of a DN/path
 query <filter> [attributes] [base|path] [base|one|sub]
+find <name|pattern> [path]  DNs of objects by sAMAccountName or name, '*' as wildcard
+                         (searches the naming context of the current DN)
 acl [path] [all|explicit|risky]  readable ACL of an object (owner, rights, object types, scope)
 getsd [path] [p|g]       msldap's raw security descriptor, with paths as for cd
 map [DN|path] [depth]    tree of the DNs seen so far below a DN (default: current, 3 levels)
@@ -182,7 +184,8 @@ writing `member`, `servicePrincipalName`, `msDS-KeyCredentialLink`,
 non-privileged owner. Privileged are SYSTEM, Enterprise Domain Controllers, Administrators, Account
 Operators, Domain Admins, Domain Controllers, Schema/Enterprise Admins, (Enterprise) Key Admins and
 Enterprise Read-only Domain Controllers (of any domain in the forest), SELF and CREATOR OWNER.
-`acl . risky` shows only the marked entries, `acl . explicit` only the ones not inherited.
+To get the DN of an account or group, `find jaime.lannister`, `find "Small Council"` or `find *admin*`
+lists type, account name and DN. `acl . risky` shows only the marked entries, `acl . explicit` only the ones not inherited.
 
 Queries: the security descriptor (one base search with the SD flags control, so unprivileged users
 get owner and DACL) and one search per SID that is not well-known (cached). Attribute and class

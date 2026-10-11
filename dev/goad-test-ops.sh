@@ -199,7 +199,9 @@ check "cat with a relative path" '^DN: CN=Builtin,DC=north,DC=sevenkingdoms,DC=l
 check "cat of a missing object is explained" '^No such object: CN=nosuchobject,CN=Users,DC=north' "$RESULTS/cat.txt"
 check "ls with a path" '^CN=Administrators$' "$RESULTS/cat.txt"
 check "ls with a pattern" '^CN=Domain Controllers$' "$RESULTS/cat.txt"
-"$OPS" --no-log --no-cache "$URL" login "acl" "acl CN=Users explicit" "getsd ." "acl CN=Domain Admins,CN=Users risky" >"$RESULTS/acl.txt" 2>&1 || true
+"$OPS" --no-log --no-cache "$URL" login "find jon.sn*" "find 'Domain Admins'" "acl" "acl CN=Users explicit" "getsd ." "acl CN=Domain Admins,CN=Users risky" >"$RESULTS/acl.txt" 2>&1 || true
+check "find by account name pattern" '^user +jon\.snow +CN=jon\.snow,' "$RESULTS/acl.txt"
+check "find by name" '^group +Domain Admins +CN=Domain Admins,CN=Users,DC=north' "$RESULTS/acl.txt"
 check "acl of the domain object" '^ACL of DC=north,DC=sevenkingdoms,DC=local$' "$RESULTS/acl.txt"
 check "acl decodes the DCSync rights" 'ExtendedRight +Replicating Directory Changes All ' "$RESULTS/acl.txt"
 check "acl resolves principals" '^  allow .*\\Domain Admins ' "$RESULTS/acl.txt"

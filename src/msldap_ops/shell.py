@@ -631,6 +631,46 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 	def _cat_completions(self):
 		return self._cd_completions()
 
+	async def do_find(self, pattern, path=''):
+		"""Finds objects by account name or name and prints their DNs.
+
+		find <name|pattern> [path]
+		  name     matched against sAMAccountName and name (the RDN value), case-insensitive;
+		           '*' is a wildcard: jaime*, *admin*, kingslanding$
+		  path     where to search (as for cd); default: the naming context of the current DN,
+		           so in CN=Configuration templates and other configuration objects are found
+		One subtree search. A leading '*' makes the DC scan more and stands out in its logs.
+		"""
+		if self.connection is None:
+			print('Not connected, run login first')
+			return False
+		ncs = self._naming_contexts()
+		try:
+			if path:
+				base = navigation.resolve(path, self._current_dn, ncs)
+			else:
+				base = navigation.naming_context_of(self._current_dn, ncs) or self.connection._tree
+		except ValueError as e:
+			print(e)
+			return False
+		value = navigation.escape_glob(pattern)
+		query = '(|(sAMAccountName=%s)(name=%s))' % (value, value)
+		rows = []
+		async for entry, err in self.connection.pagedsearch(query, ['objectClass', 'sAMAccountName'], tree=base):
+			if err is not None:
+				print(records.search_error(err, base))
+				return False
+			classes = entry['attributes'].get('objectClass') or []
+			classes = classes if isinstance(classes, list) else [classes]
+			rows.append((classes[-1] if classes else '-', entry['attributes'].get('sAMAccountName') or '-', entry['objectName']))
+		if rows:
+			ui.emit(privileged.table(sorted(rows, key=lambda r: r[2].lower()), indent=0))
+		ui.out(records.count_line(len(rows)))
+		return True
+
+	def _find_completions(self):
+		return WordCompleter([])
+
 	async def do_acl(self, path='.', show='all'):
 		"""Readable ACL of one object: owner, DACL with decoded rights, object types and scope.
 
