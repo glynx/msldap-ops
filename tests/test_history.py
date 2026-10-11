@@ -47,7 +47,9 @@ def test_fzf_select(monkeypatch, tmp_path):
 	monkeypatch.setenv('PATH', '%s:%s' % (tmp_path, os.environ['PATH']))
 	assert history.fzf_available()
 	assert history.fzf_select(['find_admins', 'templates vulnerable'], 'temp') == 'templates vulnerable'
-	assert '--query temp' in (tmp_path / 'args').read_text()
+	args = (tmp_path / 'args').read_text()
+	# FZF_DEFAULT_OPTS may contain --multi, a selection must be a single command
+	assert '--query temp' in args and '--no-multi' in args
 	fake.write_text('#!/bin/sh\nexit 130\n')
 	assert history.fzf_select(['x']) is None
 

@@ -73,7 +73,7 @@ def fzf_select(entries, query=''):
 	"""Lets the user pick one entry with fzf; None if cancelled."""
 	try:
 		proc = subprocess.run(
-			['fzf', '--no-sort', '--height=40%', '--reverse', '--prompt=history> ', '--query', query],
+			['fzf', '--no-multi', '--no-sort', '--height=40%', '--reverse', '--prompt=history> ', '--query', query],
 			input='\n'.join(entries), stdout=subprocess.PIPE, text=True)
 	except OSError:
 		return None
