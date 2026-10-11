@@ -17,7 +17,7 @@ from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.patch_stdout import patch_stdout
 
 from msldap_ops import __version__
-from msldap_ops import acl, hooks, laps, navigation, opsec, presets, privileged, records, templates, ui
+from msldap_ops import acl, changes as changelog, hooks, laps, navigation, opsec, presets, privileged, records, templates, ui
 from msldap_ops import history as command_history
 from msldap_ops import transcript
 
@@ -63,7 +63,7 @@ class SearchWatch:
 # listed here (the long tail of msldap built-ins) are shown under "Other" at the end. '*' marks a
 # command that changes the directory.
 HELP_CATEGORIES = [
-	('Session', ['login', 'opsec', 'log', 'transcript', 'cache', 'whoami', 'help', 'exit']),
+	('Session', ['login', 'opsec', 'log', 'transcript', 'cache', 'changes', 'undo', 'whoami', 'help', 'exit']),
 	('Navigation', ['cd', 'ls', 'cat', 'tree', 'map', 'find', 'query']),
 	('Enumeration', ['bofhound_collect', 'find_admins', 'acl', 'getsd', 'laps', 'groupmembership',
 		'trusts', 'spns', 'asrep', 'pre2000', 'gmsa']),
@@ -207,9 +207,10 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			return EXIT
 		return None
 
-	def __init__(self, url=None, querylog=None, gate=None, keepalive=300, cache=None, history_file=None):
+	def __init__(self, url=None, querylog=None, gate=None, keepalive=300, cache=None, history_file=None, changes_log=None):
 		MSLDAPClientConsole.__init__(self, url)
 		self.history_file = history_file
+		self.changes_log = changes_log
 		self.querylog = querylog
 		self.cache = cache
 		self.gate = gate if gate is not None else opsec.OpsecGate()
@@ -881,6 +882,63 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 
 	def _groupmembers_completions(self):
 		return self._cd_completions()
+
+	async def do_changes(self):
+		"""Lists the directory changes made in this session and whether they can be undone.
+
+		changes          every add/modify/delete, newest last, with an index for undo
+		Use 'undo' to reverse the last undoable change, or 'undo <n>' for change #n.
+		"""
+		log = self.changes_log
+		if log is None or not len(log):
+			print('No changes in this session')
+			return True
+		width = len(str(len(log)))
+		for i, change in enumerate(log.changes, 1):
+			if change.undone:
+				state = 'undone'
+			elif change.undoable:
+				state = 'undoable'
+			else:
+				state = 'no undo: %s' % change.reason
+			print('%s  %s  %s  [%s]' % (str(i).rjust(width), change.when.strftime('%H:%M:%S'), change.summary, state))
+		return True
+
+	async def do_undo(self, which=None):
+		"""Reverses a directory change made in this session.
+
+		undo        the last change that can be undone
+		undo <n>    change number #n (see 'changes')
+		The undo is itself an LDAP change: opsec shows/confirms it and it is recorded.
+		"""
+		if self.connection is None:
+			print('Not connected, run login first')
+			return False
+		log = self.changes_log
+		if log is None or not len(log):
+			print('No changes to undo')
+			return True
+		if which is None:
+			change = log.last_undoable()
+			if change is None:
+				print('No change that can be undone')
+				return True
+		else:
+			try:
+				change = log.changes[int(which) - 1]
+			except (ValueError, IndexError):
+				print('No change #%s (see changes)' % which)
+				return False
+			if not change.undoable:
+				print('Change #%s cannot be undone: %s' % (which, 'already undone' if change.undone else change.reason))
+				return False
+		print('Undoing: %s' % change.summary)
+		ok, err = await changelog.apply_undo(self.connection, change)
+		if err is not None:
+			print('Undo failed: %s' % err)
+			return False
+		print('Undone' if ok else 'Undo was not applied')
+		return bool(ok)
 
 	async def do_acl(self, path='.', show='all'):
 		"""Readable ACL of one object: owner, DACL with decoded rights, object types and scope.

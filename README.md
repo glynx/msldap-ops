@@ -241,6 +241,25 @@ not written to the bofhound log again. `--cache-memory-only` keeps the cache off
 
 The cache also keeps an index of every DN seen in a result, for navigation.
 
+## Changes and undo
+
+Every directory change (add, modify, delete) is recorded in a session change log with its inverse,
+so it can be undone:
+
+```text
+changes       list the changes of this session, newest last, with an index and whether each
+              can be undone
+undo          reverse the last change that can be undone
+undo <n>      reverse change #n
+```
+
+Before a change is sent, the old value it needs for the inverse is read (one background search,
+not shown or logged). `add`/`delete` of a value invert directly, a `replace` is restored to the old
+value, and a created object is removed again. Not undoable automatically: deleting an object,
+changing a password (the old one is unknown) and a value that could not be read back; `changes`
+shows the reason. An `undo` is itself an LDAP change: opsec shows or confirms it and it is recorded.
+The change log lives in the session; the query journal keeps the durable record.
+
 ## Opsec
 
 `opsec <mode>` (or `--opsec show|confirm` on the command line, which also covers the login) controls

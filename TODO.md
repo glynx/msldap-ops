@@ -34,8 +34,10 @@
 - [ ] Optional jitter for `bofhound_collect` delays
 - [x] Writing operations (add/modify/delete, msldap's addusertogroup, setsd, changeuserpw, ...) go
       through the opsec gate (shown, confirmed, not sent in dryrun) and into the journal
-- [ ] Review which writing commands are missing for daily work (granting rights such as
-      GenericAll/WriteDacl/DCSync on an object, owner changes, shadow credentials cleanup, ...)
+- [x] Backup before every change (read the old value) and a session change log with undo
+      (`changes`, `undo`); add/delete invert directly, replace is restored, add-object is removed
+- [ ] Writing commands still missing: generic grant/revoke of an ACE, set an attribute
+      (add/delete/replace, UAC flags), list/clear shadow credentials and RBCD, change owner
 
 ## Navigation
 
@@ -82,6 +84,8 @@
 - [x] Separate records (query output) on the terminal
 - [x] Redirect a command's output to a file (`> file`, `>> file`)
 - [ ] Better command descriptions (parameters, allowed values) for the msldap-ops commands
+- [ ] Factor out the shared "resolve a path argument like cd, print the error cleanly" helper used
+      by cd, cat, acl, getsd, laps, groupmembers, find
 - [ ] Restructure the README: one section per command group (navigation, enumeration, ACLs/LAPS,
       writing, opsec, cache, output), with the parameters and allowed values of each command
 - [x] Group `help` into categories (Session, Navigation, Enumeration, Lookup, ADCS, DNS, Writing,

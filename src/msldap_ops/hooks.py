@@ -23,6 +23,7 @@ keepalive, are marked as ``background``.
 """
 
 import asyncio
+import contextlib
 
 import datetime
 import functools
@@ -30,6 +31,7 @@ import inspect
 import logging
 
 import msldap.connection
+from msldap.commons.customvalue import LDAPCustomValue
 from msldap.connection import MSLDAPClientConnection
 
 from msldap_ops.cache import is_unique, query_key
@@ -49,6 +51,28 @@ _cache = None
 # e.g. msldap's keepalive, is background).
 UNMANAGED = object()
 _foreground = UNMANAGED
+# while > 0, searches are internal (e.g. reading the old value for an undo): treated as background,
+# so they are not gated, shown or logged (they may be cached, which is harmless)
+_internal_read = 0
+
+
+@contextlib.contextmanager
+def internal_read():
+	global _internal_read
+	_internal_read += 1
+	try:
+		yield
+	finally:
+		_internal_read -= 1
+
+
+class RawValue(LDAPCustomValue):
+	"""Writes raw attribute bytes back verbatim (used to restore the previous value on undo,
+	independent of the attribute's type)."""
+
+	def encode(self):
+		return list(self.value or [])
+
 
 SEND = 'send'
 SKIP = 'skip'
@@ -118,6 +142,8 @@ def _server_name(connection):
 
 
 def _is_background():
+	if _internal_read:
+		return True
 	if _foreground is UNMANAGED:
 		return False
 	if _foreground is None:
@@ -303,6 +329,7 @@ class WriteInfo:
 		self.operation = operation
 		self.dn = dn
 		self.changes = []
+		self.modify_ops = []  # raw (op, attribute, value) for computing the inverse
 		if operation == 'add':
 			for attribute, value in (changes or {}).items():
 				values = value if isinstance(value, (list, tuple)) else [value]
@@ -312,6 +339,7 @@ class WriteInfo:
 				for op, value in ops:
 					values = value if isinstance(value, (list, tuple)) else [value]
 					self.changes.append((op, attribute, [change_value(attribute, v) for v in values]))
+					self.modify_ops.append((op, attribute, value))
 		self.started = datetime.datetime.now(datetime.timezone.utc)
 		self.finished = None
 		self.ok = None
@@ -334,9 +362,75 @@ class WriteInfo:
 		}
 
 
+def _sd_flags_control():
+	from msldap.protocol.messages import Control
+	from msldap.wintypes.asn1.sdflagsrequest import SDFlagsRequest, SDFlagsRequestValue
+	flags = SDFlagsRequest.OWNER_SECURITY_INFORMATION | SDFlagsRequest.GROUP_SECURITY_INFORMATION | SDFlagsRequest.DACL_SECURITY_INFORMATION
+	return Control({'controlType': b'1.2.840.113556.1.4.801', 'criticality': True, 'controlValue': SDFlagsRequestValue({'Flags': flags}).dump()})
+
+
+async def _read_raw(connection, dn, attributes):
+	"""Raw bytes of the given attributes of one object (lowercased name -> [bytes]), as an internal
+	background search; None if it could not be read."""
+	want = {a.lower() for a in attributes}
+	sd = 'ntsecuritydescriptor' in want
+	controls = [_sd_flags_control()] if sd else None
+	old = {}
+	with internal_read():
+		async for entry, err in connection.search(dn, '(objectClass=*)', [a.encode() for a in attributes],
+				search_scope=0, controls=controls):
+			if err is not None:
+				return None
+			raw = getattr(entry, 'raw', None)
+			if raw is None:
+				continue
+			for attribute in raw['attributes']:
+				name = attribute['type'].decode() if isinstance(attribute['type'], bytes) else str(attribute['type'])
+				old[name.lower()] = list(attribute['attributes'] or [])
+	return old
+
+
+async def _prepare_undo(connection, info):
+	"""(undo WriteInfo-compatible action, reason) for a change, computed before it is applied.
+
+	The action is ('operation', dn, changes) that reverses info, or None with a reason when the
+	change cannot be undone automatically. For modify, 'add'/'delete' of values invert directly;
+	'replace' needs the old value, read here and written back verbatim (RawValue)."""
+	if info.operation == 'add':
+		return ('delete', info.dn, None), None
+	if info.operation == 'delete':
+		return None, 'deleting an object cannot be undone automatically'
+	if info.operation != 'modify':
+		return None, 'not undoable'
+	needs_old = [attr for op, attr, _ in info.modify_ops
+		if op == 'replace' and attr.lower() not in SECRET_ATTRIBUTES]
+	old = await _read_raw(connection, info.dn, needs_old) if needs_old else {}
+	inverse, reasons = {}, []
+	for op, attribute, value in info.modify_ops:
+		if attribute.lower() in SECRET_ATTRIBUTES:
+			reasons.append('%s (secret)' % attribute)
+			continue
+		if op == 'add':
+			inverse.setdefault(attribute, []).append(('delete', value))
+		elif op == 'delete':
+			inverse.setdefault(attribute, []).append(('add', value))
+		elif op == 'replace':
+			if old is None:
+				reasons.append('%s (old value not readable)' % attribute)
+				continue
+			inverse.setdefault(attribute, []).append(('replace', RawValue(old.get(attribute.lower(), []))))
+		else:
+			reasons.append('%s (%s)' % (attribute, op))
+	if reasons:
+		# a partial restore would be misleading, so the whole change counts as not undoable
+		return None, 'cannot undo: ' + ', '.join(reasons)
+	return ('modify', info.dn, inverse), None
+
+
 def _wrap_write(original):
-	"""Wraps add/modify/delete: the gate is asked first (show/confirm/dryrun), listeners get
-	write_end(info), cached searches are dropped afterwards."""
+	"""Wraps add/modify/delete: the gate is asked first (show/confirm/dryrun), the old values an
+	undo needs are read before the change, listeners get write_end(info) always and
+	write_done(info, undo, reason) on a successful change; cached searches are dropped afterwards."""
 	signature = inspect.signature(original)
 
 	@functools.wraps(original)
@@ -356,6 +450,8 @@ def _wrap_write(original):
 				info.finished = datetime.datetime.now(datetime.timezone.utc)
 				_notify('write_end', info)
 				return False, info.error
+		# read the old values that the inverse needs, before the change goes out
+		undo, undo_reason = await _prepare_undo(self, info)
 		try:
 			result = await original(self, *args, **kwargs)
 		except Exception as e:
@@ -366,6 +462,8 @@ def _wrap_write(original):
 				info.ok, info.error = result
 			except (TypeError, ValueError):
 				info.ok = bool(result)
+			if info.ok:
+				_notify('write_done', info, undo, undo_reason)
 			return result
 		finally:
 			info.finished = datetime.datetime.now(datetime.timezone.utc)

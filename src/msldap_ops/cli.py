@@ -9,7 +9,7 @@ from asyauth import logger as authlogger
 from asysocks import logger as sockslogger
 from msldap import logger as msldaplogger
 
-from msldap_ops import __version__, hooks, transcript, ui
+from msldap_ops import __version__, changes, hooks, transcript, ui
 from msldap_ops.cache import DEFAULT_CACHE_DIR, DEFAULT_TTL, QueryCache
 from msldap_ops.history import default_path as default_history_path
 from msldap_ops.opsec import OpsecGate
@@ -38,10 +38,13 @@ async def amain(args):
 		hooks.add_listener(cache)
 	gate = OpsecGate(args.opsec)
 	hooks.set_gate(gate)
+	changelog = changes.ChangeLog()
+	hooks.add_listener(changelog)
 	# from here on the console tracks which task runs a command
 	hooks.set_foreground(None)
 	console = MSLDAPOpsConsole(args.url, querylog=querylog, gate=gate, keepalive=args.keepalive, cache=cache,
-		history_file=None if args.no_history else os.path.expanduser(args.history_file))
+		history_file=None if args.no_history else os.path.expanduser(args.history_file),
+		changes_log=changelog)
 	if len(args.commands) == 0:
 		res = await console._run_single_command('login', [])
 		if res is False:
