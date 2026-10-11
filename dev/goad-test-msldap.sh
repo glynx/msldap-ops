@@ -215,6 +215,11 @@ msldap_cli "$PY" cli-certify2-essos-domain.txt "$ESSOS_LOW_URL" login "certify2 
 check "certify2 accepts DOMAIN/user and user@domain" '^Template Name:' "$RESULTS/cli-certify2-essos-domain.txt"
 check "certify2 rejects users of other domains explicitly" 'belongs to domain NORTH' "$RESULTS/cli-certify2-essos-domain.txt"
 
+# NORTH user bound to the essos DC via the forest trust: the account is not in essos
+TRUST_URL="$(mkurl "$PY" NORTH "$LOWPRIV_USER" "$LOWPRIV_PASS" "$ESSOS_DC")"
+msldap_cli "$PY" cli-certify2-trust.txt "$TRUST_URL" login certify2
+check "certify2 via trust reports the missing account instead of 'no findings'" 'not found in the domain of the connected server' "$RESULTS/cli-certify2-trust.txt"
+
 # --- optional baseline -----------------------------------------------------------
 if [[ $COMPARE -eq 1 ]]; then
   BWT="$(prepare_checkout base "$BASE_BRANCH")"
