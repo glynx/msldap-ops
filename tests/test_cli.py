@@ -36,3 +36,20 @@ async def test_log_command_without_logging(capsys):
 	console = MSLDAPOpsConsole(None)
 	assert await console.do_log() is True
 	assert '--no-log' in capsys.readouterr().out
+
+
+def test_failed_login_leaves_no_connection(monkeypatch):
+	import asyncio
+
+	from msldap.examples.msldapclient import MSLDAPClientConsole
+
+	from msldap_ops.shell import MSLDAPOpsConsole
+
+	async def failing_login(self, url=None):
+		self.connection = object()
+		return False
+
+	monkeypatch.setattr(MSLDAPClientConsole, 'do_login', failing_login)
+	console = MSLDAPOpsConsole(None)
+	assert asyncio.run(console.do_login('ldap://x')) is False
+	assert console.connection is None

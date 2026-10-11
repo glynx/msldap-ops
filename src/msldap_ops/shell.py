@@ -10,9 +10,11 @@ from msldap.protocol.constants import BASE, LEVEL, SUBTREE
 from msldap.wintypes.asn1.sdflagsrequest import SDFlagsRequest, SDFlagsRequestValue
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.patch_stdout import patch_stdout
 
 from msldap_ops import hooks, navigation, opsec, presets, privileged, records, templates, ui
+from msldap_ops import history as command_history
 
 
 def split_redirect(args):
@@ -56,7 +58,14 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		"""aiocmd's run(), with patch_stdout(raw=True) so that colors reach the terminal."""
 		if self._ignore_sigint and sys.platform != 'win32':
 			asyncio.get_event_loop().add_signal_handler(signal.SIGINT, self._sigint_handler)
-		self.session = PromptSession(enable_history_search=True, key_bindings=self._get_bindings())
+		bindings = self._get_bindings()
+		if self.history_file:
+			history = command_history.PrivateFileHistory(self.history_file)
+		else:
+			history = InMemoryHistory()
+		if command_history.fzf_available():
+			command_history.add_fzf_binding(bindings, history)
+		self.session = PromptSession(enable_history_search=True, key_bindings=bindings, history=history)
 		try:
 			with patch_stdout(raw=True):
 				proxy = sys.stdout
@@ -70,8 +79,9 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 				asyncio.get_event_loop().remove_signal_handler(signal.SIGINT)
 			self._on_close()
 
-	def __init__(self, url=None, querylog=None, gate=None, keepalive=300, cache=None):
+	def __init__(self, url=None, querylog=None, gate=None, keepalive=300, cache=None, history_file=None):
 		MSLDAPClientConsole.__init__(self, url)
+		self.history_file = history_file
 		self.querylog = querylog
 		self.cache = cache
 		self.gate = gate if gate is not None else opsec.OpsecGate()
@@ -120,7 +130,10 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 	async def do_login(self, url=None):
 		"""Performs connection and login"""
 		res = await MSLDAPClientConsole.do_login(self, url)
-		if self.connection is not None:
+		if res is False:
+			# msldap keeps the unconnected client, the other commands would fail on it
+			self.connection = None
+		elif self.connection is not None:
 			self._apply_keepalive()
 		return res
 

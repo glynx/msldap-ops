@@ -218,6 +218,18 @@ find_admins >> report.txt
 The file gets plain text. Opsec queries and questions stay on the screen, so `opsec confirm` works
 while redirecting.
 
+## History
+
+The command history is kept across sessions in `~/.local/state/msldap-ops/history` (or
+`$XDG_STATE_HOME/msldap-ops/history`), readable by the user only. Commands with secrets - `login`
+with a password or hash in the URL, `adduser`, `changeuserpw`, `addcomputer` with a password - are
+available in the running session but not written to the file. `--history-file` picks another file,
+`--no-history` keeps the history in memory only.
+
+Up/Down search the history for entries starting with the typed text. Ctrl-R opens
+[fzf](https://github.com/junegunn/fzf) over the history if it is installed (the typed text is the
+initial query), otherwise the built-in reverse search.
+
 ## Development
 
 ```bash

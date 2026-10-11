@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import logging
+import os
 import shlex
 import sys
 
@@ -10,6 +11,7 @@ from msldap import logger as msldaplogger
 
 from msldap_ops import __version__, hooks, ui
 from msldap_ops.cache import DEFAULT_CACHE_DIR, DEFAULT_TTL, QueryCache
+from msldap_ops.history import default_path as default_history_path
 from msldap_ops.opsec import OpsecGate
 from msldap_ops.querylog import DEFAULT_LOG_DIR, QueryLog
 from msldap_ops.shell import MSLDAPOpsConsole
@@ -34,7 +36,8 @@ async def amain(args):
 	hooks.set_gate(gate)
 	# from here on the console tracks which task runs a command
 	hooks.set_foreground(None)
-	console = MSLDAPOpsConsole(args.url, querylog=querylog, gate=gate, keepalive=args.keepalive, cache=cache)
+	console = MSLDAPOpsConsole(args.url, querylog=querylog, gate=gate, keepalive=args.keepalive, cache=cache,
+		history_file=None if args.no_history else os.path.expanduser(args.history_file))
 	if len(args.commands) == 0:
 		res = await console._run_single_command('login', [])
 		if res is False:
@@ -68,6 +71,8 @@ def main():
 	parser.add_argument('--cache-ttl', type=int, default=DEFAULT_TTL, metavar='SECONDS', help='How long cached search results are reused. Default: %(default)s')
 	parser.add_argument('--cache-memory-only', action='store_true', help='Keep the cache in memory only, do not write it to disk')
 	parser.add_argument('--no-cache', action='store_true', help='Disable the query cache')
+	parser.add_argument('--history-file', default=default_history_path(), help='Command history across sessions. Default: %(default)s')
+	parser.add_argument('--no-history', action='store_true', help='Keep the command history for this session only')
 	parser.add_argument('--no-color', action='store_true', help='Plain output without colors (also: NO_COLOR environment variable)')
 	parser.add_argument('url', help='Connection string in msldap URL format')
 	parser.add_argument('commands', nargs='*', help="Commands to run in order. 'i' drops into the interactive shell. Without commands the shell starts after login.")
