@@ -7,7 +7,7 @@ def test_help_groups_commands(capsys):
 	assert console.do_help() is True
 	out = capsys.readouterr().out
 	# every category with its commands appears, our commands grouped
-	for title in ['Session:', 'Navigation:', 'Enumeration:', 'Lookup:', 'Writing (changes the directory):']:
+	for title in ['Session:', 'Navigation:', 'Enumeration:', 'Lookup:', 'ADCS:', 'DNS:', 'Writing (changes the directory):']:
 		assert title in out
 	assert 'Other msldap commands:' in out  # the long tail
 	# a few commands land in the right section
@@ -16,8 +16,12 @@ def test_help_groups_commands(capsys):
 		assert name in nav
 	writing = out.split('Writing')[1]
 	assert 'addusertogroup' in writing
-	# writing commands are marked with *
+	# writing commands are marked with * in any category (also ADCS/DNS)
 	assert 'addusertogroup <user_dn> <group_dn> *' in out
+	adcs = out.split('ADCS:')[1].split('\n\n')[0]
+	assert 'templates ' in adcs and 'addenrollmentright' in adcs and 'addenrollmentright <certtemplatename> <user_dn> *' in out
+	dns = out.split('DNS:')[1].split('\n\n')[0]
+	assert 'dnsquery' in dns and 'dnsadd ' in dns and ' *' in dns.split('dnsadd')[1].split('\n')[0]
 
 
 def test_help_single_command_still_detailed(capsys):

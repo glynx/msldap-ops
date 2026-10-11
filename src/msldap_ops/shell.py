@@ -65,16 +65,24 @@ class SearchWatch:
 HELP_CATEGORIES = [
 	('Session', ['login', 'opsec', 'log', 'transcript', 'cache', 'whoami', 'help', 'exit']),
 	('Navigation', ['cd', 'ls', 'cat', 'tree', 'map', 'find', 'query']),
-	('Enumeration', ['bofhound_collect', 'find_admins', 'templates', 'acl', 'getsd', 'laps',
-		'groupmembership', 'trusts', 'spns', 'asrep', 'pre2000', 'gmsa']),
+	('Enumeration', ['bofhound_collect', 'find_admins', 'acl', 'getsd', 'laps', 'groupmembership',
+		'trusts', 'spns', 'asrep', 'pre2000', 'gmsa']),
 	('Lookup', ['sam2dn', 'sid2dn', 'dn2sid', 'dn2sam', 'sidresolv', 'user', 'machine']),
+	('ADCS', ['templates', 'certtemplates', 'enrollmentservices', 'rootcas', 'ntcas', 'aiacas',
+		'certify', 'certify2', 'addenrollmentright', 'addcerttemplatenameflagaltname']),
+	('DNS', ['dnsquery', 'dnsqueryall', 'dnsdump', 'dnszones', 'dnssoa', 'dnsgetserial',
+		'dnsadd', 'dnsremove', 'dnsdelete', 'dnsmodify', 'dnsrestore']),
 	('Writing (changes the directory)', ['addusertogroup', 'deluserfromgroup', 'adduser', 'deluser',
 		'addcomputer', 'changeuserpw', 'enableuser', 'disableuser', 'unlockuser', 'addspn', 'delspn',
 		'addhostname', 'changesamaccountname', 'setsd', 'changeowner', 'addprivdcsync',
 		'addprivaddmember', 'add_genericwrite', 'addallowedtoactonbehalfofotheridentity', 'shadowcred',
-		'addenrollmentright', 'modify', 'delete', 'rm']),
+		'modify', 'delete', 'rm']),
 ]
-WRITING_COMMANDS = set(HELP_CATEGORIES[-1][1])
+# commands that change the directory, marked with '*' in help (across all categories)
+WRITING_COMMANDS = set(HELP_CATEGORIES[-1][1]) | {
+	'addenrollmentright', 'addcerttemplatenameflagaltname',
+	'dnsadd', 'dnsremove', 'dnsdelete', 'dnsmodify', 'dnsrestore',
+}
 
 
 class MSLDAPOpsConsole(MSLDAPClientConsole):
