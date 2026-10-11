@@ -37,17 +37,17 @@ RULES = [
 	(r'^send\? .*$', 'bold'),
 	(r'^(Privileged groups in|Privileged accounts:|adminCount=1 users|Name or description contains|Template |Errors:).*$', 'bold'),
 	(r'^  (Permissions|\[!\] Vulnerabilities.*)$', 'bold'),
-	(r'^ACL of .*?(?=  \(from the cache, |$)', 'bold'),
+	(r'^ACL of .*?(?=  \(from cache: |$)', 'bold'),
 	(r'^  Access +Principal +Rights +Object +Applies to$', 'bold'),
 	(r'^  deny\b', 'yellow'),
 	(r'^Note: .*$', 'yellow'),
 	(r'^WARNING: .*$', 'bold yellow'),
 	# records of msldap's query command
-	(r'^DN: .*?(?=  \(from the cache, |$)', 'bold cyan'),
+	(r'^DN: .*?(?=  \(from cache: |$)', 'bold cyan'),
 	(r'^Attributes:$', 'bright_black'),
 	(r'^  [A-Za-z][\w;-]*:(?= |$)', 'blue'),
 	(r'^\(\d+ objects?\)', 'bright_black'),
-	(r'  \(from the cache, [^)]*\)$', 'bright_black'),
+	(r'  \(from cache: [^)]*\)$', 'bright_black'),
 	(r'^    - ', 'bright_black'),
 ]
 # lines that end a record (msldap's query prints '---') and lines that start one
@@ -133,6 +133,30 @@ def wrap(line, width):
 	return [' ' * pad + line[a:b].rstrip() for pad, a, b in wrap_spans(line, width)]
 
 
+MATCH_STYLE = 'bold magenta'
+
+
+def highlighted(line, spans):
+	"""line with the given (start, end) spans in MATCH_STYLE, rendered for the terminal; StyledStream
+	passes lines with escape sequences through unchanged. Plain text without colors and when the
+	output goes to a file."""
+	if output_width() is None or not spans:
+		return line
+	text = styled(line)
+	for start, end in spans:
+		text.stylize(MATCH_STYLE, start, end)
+	return _ansi([text])
+
+
+def _ansi(texts):
+	buf = io.StringIO()
+	console = Console(file=buf, force_terminal=True, width=100000, highlight=False, soft_wrap=True,
+		emoji=False, markup=False)
+	for i, text in enumerate(texts):
+		console.print(text, end='' if i == len(texts) - 1 else '\n')
+	return buf.getvalue()
+
+
 def render(line, width=None):
 	"""ANSI rendering of one output line (without the newline), wrapped to the terminal width."""
 	if '\x1b' in line:
@@ -148,12 +172,7 @@ def render(line, width=None):
 			texts.append(text)
 		if RECORD_START.match(line):
 			texts.insert(0, separator())
-	buf = io.StringIO()
-	console = Console(file=buf, force_terminal=True, width=100000, highlight=False, soft_wrap=True,
-		emoji=False, markup=False)
-	for i, text in enumerate(texts):
-		console.print(text, end='' if i == len(texts) - 1 else '\n')
-	return buf.getvalue()
+	return _ansi(texts)
 
 
 class StyledStream(io.TextIOBase):

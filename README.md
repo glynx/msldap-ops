@@ -190,7 +190,7 @@ lists type, account name and DN. `acl . risky` shows only the marked entries, `a
 Queries: the security descriptor (one base search with the SD flags control, so unprivileged users
 get owner and DACL) and one search per SID that is not well-known. Both come from the query cache
 when possible: the security descriptor from any earlier search that returned the object with the
-SD flags control (e.g. `bofhound_collect`, then the first line says `(from the cache, <time>)`), the
+SD flags control (e.g. `bofhound_collect`, then the first line says `(from cache: <time>)`), the
 names of SIDs from any cached object with `objectSid` and `sAMAccountName`. After
 `bofhound_collect`, `acl` therefore usually sends no query at all. Attribute and class
 GUIDs are named from a built-in table; others, like the LAPS attributes whose GUIDs differ per
@@ -251,7 +251,7 @@ The prompt (`msldap-ops <DN> >`) is colored so that it stands out from the comma
 including the msldap built-in commands, keeps its plain text layout and gets colors on top. `query`
 and `cat` show every object with a separator line, its DN and aligned attribute names, values of
 multi-valued attributes below each other (`query` ends with the number of objects). Results from the
-query cache say so in gray: `(from the cache, <time>)` at the DN (`cat`) or the count (`query`, `cat *`); DN and attribute
+query cache say so in gray: `(from cache: <time>)` at the DN (`cat`) or the count (`query`, `cat *`); DN and attribute
 names are colored, findings and `[!]` marks are red, `delegable` yellow, the queries shown by `opsec`
 gray. On the terminal long lines wrap at the value column, and a long DN in the prompt is shortened
 (`CN=x,...,DC=essos,DC=local`). Without a terminal (pipes, files) the output is plain text without

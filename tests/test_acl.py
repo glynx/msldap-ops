@@ -189,7 +189,7 @@ def test_security_descriptor_and_names_from_the_cache(tmp_path):
 	assert source is not None
 	assert D + '-1105' not in client.resolved  # known from the cache
 	assert principals[D + '-1105'] == 'NORTH\\jon.snow'
-	assert acl.format_acl('CN=g,DC=x', sd, entries, principals, source)[0].startswith('ACL of CN=g,DC=x  (from the cache, ')
+	assert acl.format_acl('CN=g,DC=x', sd, entries, principals, source)[0].startswith('ACL of CN=g,DC=x  (from cache: ')
 
 
 def test_cached_result_without_sd_flags_is_not_used(tmp_path):

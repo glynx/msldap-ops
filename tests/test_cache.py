@@ -317,15 +317,15 @@ def test_cache_note_layout_and_style():
 
 	from msldap_ops import records, ui
 	stored = datetime.datetime(2026, 10, 11, 19, 42)
-	assert records.count_line(3, stored) == '(3 objects)  (from the cache, 2026-10-11 19:42)'
-	assert records.record_lines('CN=x', {'cn': 'x'}, stored)[1] == 'DN: CN=x  (from the cache, 2026-10-11 19:42)'
+	assert records.count_line(3, stored) == '(3 objects)  (from cache: 2026-10-11 19:42)'
+	assert records.record_lines('CN=x', {'cn': 'x'}, stored)[1] == 'DN: CN=x  (from cache: 2026-10-11 19:42)'
 	assert records.count_line(1) == '(1 object)'
 
 	def spans(line):
 		text = ui.styled(line)
 		return [(line[s.start:s.end], str(s.style)) for s in text.spans]
 
-	assert spans('DN: CN=x  (from the cache, 2026-10-11 19:42)') == [
-		('DN: CN=x', 'bold cyan'), ('  (from the cache, 2026-10-11 19:42)', 'bright_black')]
-	assert ('ACL of DC=x', 'bold') in spans('ACL of DC=x  (from the cache, 2026-10-11 19:42)')
+	assert spans('DN: CN=x  (from cache: 2026-10-11 19:42)') == [
+		('DN: CN=x', 'bold cyan'), ('  (from cache: 2026-10-11 19:42)', 'bright_black')]
+	assert ('ACL of DC=x', 'bold') in spans('ACL of DC=x  (from cache: 2026-10-11 19:42)')
 	assert spans('ACL of DC=x') == [('ACL of DC=x', 'bold')]

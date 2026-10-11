@@ -165,6 +165,17 @@ def escape_glob(value):
 	return ''.join(out)
 
 
+def match_spans(value, pattern):
+	"""(start, end) of the literal parts of a find pattern ('*' is a wildcard) in value, if the
+	whole value matches (case-insensitive like LDAP), else []."""
+	segments = pattern.split('*')
+	regex = '.*?'.join('(%s)' % re.escape(seg) for seg in segments)
+	m = re.fullmatch(regex, value, re.IGNORECASE | re.DOTALL)
+	if m is None:
+		return []
+	return [m.span(i + 1) for i, seg in enumerate(segments) if seg]
+
+
 def _nc_hint(naming_contexts):
 	if not naming_contexts:
 		return ''

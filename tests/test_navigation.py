@@ -176,3 +176,46 @@ def test_find(capsys):
 	console._current_dn = 'CN=Services,CN=Configuration,DC=x'
 	assert asyncio.run(console.do_find('a(b)')) is True
 	assert console.connection.calls[-1] == ('(|(sAMAccountName=a\\28b\\29)(name=a\\28b\\29))', 'CN=Configuration,DC=x', 2)
+
+
+def test_match_spans():
+	from msldap_ops.navigation import match_spans
+	assert match_spans('jaime.lannister', '*lannister') == [(6, 15)]
+	assert match_spans('Domain Admins', 'domain*') == [(0, 6)]
+	assert match_spans('Domain Admins', '*adm*') == [(7, 10)]
+	assert match_spans('Domain Admins', 'domain admins') == [(0, 13)]
+	assert match_spans('Domain Admins', '*') == []
+	assert match_spans('jon.snow', '*lannister') == []  # matched by the other attribute
+	assert match_spans('a(b)', 'a(b)') == [(0, 4)]
+
+
+def test_find_highlights_the_match(monkeypatch, capsys):
+	import asyncio
+	import re
+
+	from msldap_ops import ui
+	from msldap_ops.shell import MSLDAPOpsConsole
+
+	class Client:
+		_tree = 'DC=x'
+		_serverinfo = {'namingContexts': ['DC=x']}
+
+		async def pagedsearch(self, query, attributes, controls=None, tree=None, search_scope=2):
+			yield {'objectName': 'CN=Jaime Lannister,DC=x',
+				'attributes': {'objectClass': ['user'], 'sAMAccountName': 'jaime.lannister'}}, None
+
+	monkeypatch.setattr(ui, 'output_width', lambda: 120)
+	console = MSLDAPOpsConsole(None)
+	console.connection = Client()
+	console._current_dn = 'DC=x'
+	assert asyncio.run(console.do_find('*lannister')) is True
+	line = capsys.readouterr().out.splitlines()[0]
+	assert re.sub(r'\x1b\[[0-9;]*m', '', line) == 'user  jaime.lannister  CN=Jaime Lannister,DC=x'
+	# both matches are styled: in the account name and in the name of the DN
+	assert line.count('\x1b[1;35m') == 2
+	assert '\x1b[1;35mlannister\x1b[0m' in line and '\x1b[1;35mLannister\x1b[0m' in line
+
+	# no terminal (file, pipe): plain text
+	monkeypatch.setattr(ui, 'output_width', lambda: None)
+	assert asyncio.run(console.do_find('*lannister')) is True
+	assert '\x1b' not in capsys.readouterr().out

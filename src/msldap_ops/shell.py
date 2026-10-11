@@ -674,8 +674,18 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			classes = entry['attributes'].get('objectClass') or []
 			classes = classes if isinstance(classes, list) else [classes]
 			rows.append((classes[-1] if classes else '-', entry['attributes'].get('sAMAccountName') or '-', entry['objectName']))
-		if rows:
-			ui.emit(privileged.table(sorted(rows, key=lambda r: r[2].lower()), indent=0))
+		rows.sort(key=lambda r: r[2].lower())
+		widths = [max((len(r[i]) for r in rows), default=0) for i in range(2)]
+		for kind, sam, dn in rows:
+			line = '%s  %s  %s' % (kind.ljust(widths[0]), sam.ljust(widths[1]), dn)
+			# where the pattern matched: the account name and the name (value of the first RDN)
+			sam_at = widths[0] + 2
+			dn_at = sam_at + widths[1] + 2
+			first = navigation.split_dn(dn)[0] if dn else ''
+			name_at = dn_at + first.find('=') + 1
+			spans = [(sam_at + a, sam_at + b) for a, b in navigation.match_spans(sam, pattern) if sam != '-']
+			spans += [(name_at + a, name_at + b) for a, b in navigation.match_spans(first.partition('=')[2], pattern)]
+			print(ui.highlighted(line.rstrip(), spans))
 		ui.out(records.count_line(len(rows)))
 		return True
 

@@ -26,7 +26,7 @@ def value_str(name, value):
 
 def cached_note(stored):
 	"""Suffix for output that comes from the query cache; stored: datetime or None."""
-	return '  (from the cache, %s)' % stored.strftime('%Y-%m-%d %H:%M') if stored is not None else ''
+	return '  (from cache: %s)' % stored.strftime('%Y-%m-%d %H:%M') if stored is not None else ''
 
 
 def record_lines(dn, attributes, cached_at=None):
