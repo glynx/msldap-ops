@@ -25,6 +25,11 @@ EDDARD = user('eddard.stark', 1111, servicePrincipalName=['HTTP/x'], adminCount=
 ROBERT = user('robert.baratheon', 1112, uac=0x200 | 0x10000, adminCount=1)
 CATELYN = user('catelyn.stark', 1113, uac=0x200 | 0x100000)
 OLD = user('old.admin', 1120, adminCount=1)
+SVC = user('svc-sql', 1130, servicePrincipalName=['MSSQLSvc/db'], description='SQL admin service account')
+SQLADMINS = obj('CN=SQL Admins,CN=Users,' + BASE, sAMAccountName='SQL Admins', objectSid='%s-1131' % DOM,
+	objectClass=['top', 'group'], member=[SVC['objectName'], CATELYN['objectName']])
+ADMWKS = obj('CN=ADMWKS01,CN=Computers,' + BASE, sAMAccountName='ADMWKS01$', objectSid='%s-1132' % DOM,
+	objectClass=['top', 'computer'], userAccountControl=0x1000)
 DC = obj('CN=WINTERFELL,OU=Domain Controllers,' + BASE, sAMAccountName='WINTERFELL$', objectSid='%s-1001' % DOM,
 	objectClass=['top', 'computer'], userAccountControl=0x2000 | 0x80000)
 
@@ -67,6 +72,9 @@ class FakeClient:
 			results = [obj('CN=sevenkingdoms.local,CN=System,' + BASE, securityIdentifier=ROOT)]
 		elif query.startswith('(&(adminCount=1)'):
 			results = [EDDARD, ROBERT, OLD]
+		elif '(sAMAccountName=*adm*)' in query:
+			# already listed objects come back as well and must be skipped
+			results = [SVC, SQLADMINS, ADMWKS, OLD, GROUPS['%s-512' % DOM]]
 		for r in results:
 			yield r, None
 
@@ -97,7 +105,27 @@ async def test_collect_privileged_accounts():
 	assert accounts['catelyn.stark'].findings() == []  # sensitive, cannot be delegated
 	assert accounts['WINTERFELL$'].findings() == []  # DCs have unconstrained delegation by design
 	assert [a.name for a in report.orphaned] == ['old.admin']
+
+	matches = {m.account.name: m for m in report.name_matches}
+	assert set(matches) == {'svc-sql', 'SQL Admins', 'ADMWKS01$'}
+	assert matches['svc-sql'].fields == ['description']
+	assert matches['svc-sql'].account.findings() == ['kerberoastable', 'delegable']
+	assert matches['SQL Admins'].members == 2
+	assert matches['ADMWKS01$'].account.kind == 'computer'
 	assert report.errors == []
+
+
+async def test_name_search_can_be_skipped():
+	client = FakeClient()
+	report = await privileged.collect(client, None)
+	assert report.name_matches == []
+	assert not any('*adm*' in q for q in client.queries)
+
+
+def test_name_search_filter_escapes_the_pattern():
+	flt = privileged.name_search_filter('a*(b)')
+	assert '(sAMAccountName=*a\\2a\\28b\\29*)' in flt
+	assert '(sAMAccountType=805306369)' in flt
 
 
 async def test_report_and_command(capsys):
@@ -113,6 +141,8 @@ async def test_report_and_command(capsys):
 	assert 'pwdLastSet 2026-04-21' in out
 	assert 'adminCount=1 users outside the privileged groups: 1' in out
 	assert '(other domain)' in out
+	assert "Name or description contains 'adm', outside the privileged groups: 3" in out
+	assert 'SQL Admins' in out and '2 members' in out
 
 
 def test_root_groups_without_root_sid():

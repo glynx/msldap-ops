@@ -117,7 +117,7 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 	def _bofhound_collect_completions(self):
 		return WordCompleter(['all'] + list(presets.PRESETS))
 
-	async def do_admins(self):
+	async def do_admins(self, pattern=privileged.DEFAULT_NAME_PATTERN):
 		"""Lists the privileged accounts of the connected domain.
 
 		Shows the recursive members of the protected groups (Domain/Enterprise/Schema Admins,
@@ -127,13 +127,17 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		delegation, 'delegable' (neither "sensitive and cannot be delegated" nor in Protected
 		Users), disabled. Also lists adminCount=1 users that are no longer in any of the groups.
 
+		pattern: additionally lists users, computers and groups outside the privileged groups
+		whose sAMAccountName, displayName or description contains it (default: adm, which
+		also matches 'admin' and 'Administrator'). Use '-' to skip the name search.
+
 		Groups of the forest root (Enterprise/Schema Admins) can only be listed on a DC of the
 		forest root; on a child domain they are reported with a hint.
 		"""
 		if self.connection is None:
 			print('Not connected, run login first')
 			return False
-		report = await privileged.collect(self.connection)
+		report = await privileged.collect(self.connection, None if pattern == '-' else pattern)
 		for line in privileged.format_report(report):
 			print(line)
 		return not report.errors

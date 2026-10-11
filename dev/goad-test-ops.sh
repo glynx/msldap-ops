@@ -118,6 +118,8 @@ check_cmd "no error section" bash -c "! grep -q '^Errors:' '$RESULTS/admins-nort
 "$OPS" --no-log "$ROOT_URL" login admins >"$RESULTS/admins-root.txt" 2>&1 || true
 check "Enterprise Admins listed on the forest root" '^  [^ ].* \(S-1-5-21-[0-9-]+-519\): [1-9][0-9]* accounts$' "$RESULTS/admins-root.txt"
 check "Schema Admins listed on the forest root" '^  [^ ].* \(S-1-5-21-[0-9-]+-518\): [0-9]+ accounts$' "$RESULTS/admins-root.txt"
+check "name search runs" "^Name or description contains 'adm', outside the privileged groups: [0-9]+$" "$RESULTS/admins-north.txt"
+echo "   INFO  $(grep -E "^Name or description contains" "$RESULTS/admins-north.txt" || true)"
 echo "   INFO  findings on north: $(grep -oE '(kerberoastable|asrep-roastable|password-never-expires|unconstrained-delegation|delegable|password-not-required)' "$RESULTS/admins-north.txt" | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
 
 echo

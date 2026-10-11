@@ -35,6 +35,16 @@ GROUP_ATTRIBUTES = ['sAMAccountName', 'distinguishedName', 'objectSid', 'member'
 
 IN_CHAIN = '1.2.840.113556.1.4.1941'
 
+# attributes searched for the name pattern (e.g. *adm*), and the account types searched
+NAME_SEARCH_ATTRIBUTES = ['sAMAccountName', 'displayName', 'description']
+NAME_SEARCH_TYPES = [
+	805306368,  # user
+	805306369,  # computer (admin workstations, PAWs)
+	268435456, 268435457,  # global groups (security, distribution)
+	536870912, 536870913,  # domain local / builtin groups
+]
+DEFAULT_NAME_PATTERN = 'adm'
+
 UAC_ACCOUNTDISABLE = 0x2
 UAC_PASSWD_NOTREQD = 0x20
 UAC_SERVER_TRUST_ACCOUNT = 0x2000
@@ -145,12 +155,33 @@ class GroupResult:
 
 
 @dataclass
+class NameMatch:
+	account: Account
+	fields: List[str]  # attributes the pattern was found in
+	members: int = 0  # direct members, for groups
+
+
+@dataclass
 class Report:
 	domain_dn: str
 	groups: List[GroupResult]
 	accounts: Dict[str, Account]  # by DN
 	orphaned: List[Account]  # adminCount=1 but not in any privileged group
+	name_pattern: Optional[str] = None
+	name_matches: List[NameMatch] = field(default_factory=list)  # outside the groups above
 	errors: List[str] = field(default_factory=list)
+
+
+def escape_filter_value(value):
+	"""RFC 4515 escaping, so that the pattern is matched literally."""
+	return ''.join('\\%02x' % ord(c) if c in '*()\\\x00' else c for c in value)
+
+
+def name_search_filter(pattern):
+	escaped = escape_filter_value(pattern)
+	types = ''.join('(sAMAccountType=%d)' % t for t in NAME_SEARCH_TYPES)
+	names = ''.join('(%s=*%s*)' % (a, escaped) for a in NAME_SEARCH_ATTRIBUTES)
+	return '(&(|%s)(|%s))' % (types, names)
 
 
 def group_sids(domain_sid, root_sid):
@@ -189,8 +220,12 @@ async def _root_domain_sid(client, errors):
 	return None, root_dns
 
 
-async def collect(client):
-	"""Gathers the privileged group memberships of the connected domain."""
+async def collect(client, name_pattern=DEFAULT_NAME_PATTERN):
+	"""Gathers the privileged group memberships of the connected domain.
+
+	name_pattern: additionally lists users, computers and groups whose name or description
+	contains it (None or '' to skip).
+	"""
 	errors = []
 	info = client._serverinfo or {}
 	domain_dn = info.get('defaultNamingContext') or client._tree
@@ -247,7 +282,20 @@ async def collect(client):
 			account.protected_user = account.sid in protected
 			orphaned.append(account)
 
-	return Report(domain_dn, groups, accounts, orphaned, errors)
+	report = Report(domain_dn, groups, accounts, orphaned, errors=errors)
+	if name_pattern:
+		report.name_pattern = name_pattern
+		known = set(accounts) | {a.dn.lower() for a in orphaned} | {g.dn.lower() for g in groups if g.dn}
+		query = name_search_filter(name_pattern)
+		attributes = USER_ATTRIBUTES + ['displayName', 'description', 'member']
+		for entry in await _search(client, query, attributes, errors):
+			account = Account.from_entry(entry)
+			if account.dn.lower() in known:
+				continue
+			account.protected_user = account.sid in protected
+			fields = [a for a in NAME_SEARCH_ATTRIBUTES if any(name_pattern.lower() in str(v).lower() for v in as_list(attr(entry, a)))]
+			report.name_matches.append(NameMatch(account, fields, len(as_list(attr(entry, 'member')))))
+	return report
 
 
 def _is_foreign(dn, domain_dn):
@@ -287,6 +335,14 @@ def format_report(report):
 	lines.append('adminCount=1 users outside the privileged groups: %d' % len(report.orphaned))
 	for account in sorted(report.orphaned, key=lambda a: a.name.lower()):
 		lines.append('  %-24s %s' % (account.name, ', '.join(account.findings())))
+
+	if report.name_pattern:
+		lines.append('')
+		lines.append("Name or description contains '%s', outside the privileged groups: %d" % (report.name_pattern, len(report.name_matches)))
+		for match in sorted(report.name_matches, key=lambda m: (m.account.kind, m.account.name.lower())):
+			a = match.account
+			details = '%d members' % match.members if a.kind == 'group' else ', '.join(a.findings())
+			lines.append('  %-24s %-8s %-28s %s' % (a.name, a.kind, ','.join(match.fields), details))
 
 	if report.errors:
 		lines.append('')

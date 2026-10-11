@@ -93,7 +93,10 @@ Domain Controllers and DnsAdmins. Groups are found by SID, so localized names wo
 - `delegable`: neither "sensitive and cannot be delegated" nor in Protected Users
 - `disabled`, pwdLastSet and lastLogonTimestamp
 
-It also lists `adminCount=1` users that are no longer in any of these groups. Direct members from
+It also lists `adminCount=1` users that are no longer in any of these groups, and users, computers
+and groups outside the privileged groups whose sAMAccountName, displayName or description contains
+`adm` (catches `admin`, `Administrator`, `adm_` accounts, admin workstations, "SQL Admins", ...).
+`admins <pattern>` uses another pattern, `admins -` skips the name search. Direct members from
 other domains (foreign security principals, forest root groups) are shown with their DN. The forest
 root groups can only be listed on a DC of the forest root.
 
