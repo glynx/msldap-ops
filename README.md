@@ -145,8 +145,10 @@ cache on | off         use the cache or always ask the server
 
 Not cached: the keepalive, searches a command stopped early, failed searches. add/modify/delete
 drop all cached queries. Changes made with other tools show up after the TTL or a `cache flush`.
-`opsec show` marks searches answered from the cache with `[cache]`; they are not written to the
-bofhound log again. `--cache-memory-only` keeps the cache off the disk, `--no-cache` disables it.
+Searches answered from the cache send nothing, so `opsec confirm` does not ask for them; `opsec`
+shows them as one `[cache]` line and counts them separately (`[opsec] find_admins: 2 LDAP queries
+issued, 8 answered from the cache`). The query journal records them with `"cached": true`; they are
+not written to the bofhound log again. `--cache-memory-only` keeps the cache off the disk, `--no-cache` disables it.
 
 The cache also keeps an index of every DN seen in a result, for navigation.
 

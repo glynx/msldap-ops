@@ -10,6 +10,8 @@ Modes:
 	         y = send, n = skip (the command gets an empty result),
 	         a = send this and all further queries of the running command, q = abort the command;
 	         the queries of cd, ls and cat are only shown
+	searches answered from the cache are never confirmed (nothing is sent); they are shown as
+	one [cache] line and counted separately in the summary after each command
 	dryrun   queries are printed but not sent; commands that build queries on earlier results
 	         only show their first stage
 """
@@ -69,23 +71,30 @@ class OpsecGate:
 		self._send_all = False
 		self._aborted = False
 		self.counter = 0
+		self.cached_counter = 0
 
 	def _navigation(self):
 		return self.command in NAVIGATION_COMMANDS
 
 	def end_command(self):
-		if self.counter and self.mode in ('show', 'confirm', 'dryrun') and not self._navigation():
-			self.out('[opsec] %s: %d LDAP %s %s' % (
-				self.command, self.counter, 'query' if self.counter == 1 else 'queries',
-				'shown, none sent' if self.mode == 'dryrun' else 'issued'))
+		if (self.counter or self.cached_counter) and self.mode in ('show', 'confirm', 'dryrun') and not self._navigation():
+			if self.counter:
+				text = '%d LDAP %s %s' % (self.counter, 'query' if self.counter == 1 else 'queries',
+					'shown, none sent' if self.mode == 'dryrun' else 'issued')
+			else:
+				text = 'no LDAP queries issued'
+			if self.cached_counter:
+				text += ', %d answered from the cache' % self.cached_counter
+			self.out('[opsec] %s: %s' % (self.command, text))
 		self.command = None
 
 	def cached(self, query):
-		"""A search answered from the cache: shown in show/confirm/dryrun, nothing is sent."""
+		"""A search answered from the cache: nothing is sent, so it is not confirmed; shown as a
+		single line in show/confirm/dryrun and counted separately."""
 		if self.mode == 'off' or query.background:
 			return
-		for line in format_query(query, '[cache]'):
-			self.out(line)
+		self.cached_counter += 1
+		self.out('[cache] %s  %s  scope=%s' % (query.query, query.base, query.scope))
 
 	async def __call__(self, query):
 		if self.mode == 'off' or query.background:

@@ -169,11 +169,11 @@ echo "== query cache"
 CACHE_ARGS=(--no-log --cache-dir "$RESULTS/cache" --opsec show)
 "$OPS" "${CACHE_ARGS[@]}" "$URL" login find_admins find_admins cache >"$RESULTS/cache-1.txt" 2>&1 || true
 check "second find_admins is answered from the cache" '^\[cache\] ' "$RESULTS/cache-1.txt"
-check_cmd "find_admins sends its queries only once" test "$(grep -c '^\[opsec\] find_admins:' "$RESULTS/cache-1.txt")" -eq 1
+check "the second find_admins sends nothing" '^\[opsec\] find_admins: no LDAP queries issued, [1-9][0-9]* answered from the cache$' "$RESULTS/cache-1.txt"
 check "cache command shows hits" '^  [0-9]+ queries \([0-9]+ results\), [0-9]+ DNs known, [1-9][0-9]* hits' "$RESULTS/cache-1.txt"
 check_cmd "cache file written" bash -c "ls '$RESULTS/cache/'*.json >/dev/null 2>&1"
 "$OPS" "${CACHE_ARGS[@]}" "$URL" login find_admins >"$RESULTS/cache-2.txt" 2>&1 || true
-check_cmd "a new session reuses the persisted cache" bash -c "! grep -q '^\[opsec\] find_admins:' '$RESULTS/cache-2.txt' && grep -q '^\[cache\] ' '$RESULTS/cache-2.txt'"
+check "a new session reuses the persisted cache" '^\[opsec\] find_admins: no LDAP queries issued, [1-9][0-9]* answered from the cache$' "$RESULTS/cache-2.txt"
 "$OPS" "${CACHE_ARGS[@]}" "$URL" login "cache flush" find_admins >"$RESULTS/cache-3.txt" 2>&1 || true
 check "flush empties the cache" '^Dropped [0-9]+ cached quer(y|ies) and the DN index$' "$RESULTS/cache-3.txt"
 check "after a flush the queries are sent again" '^\[opsec\] find_admins: [0-9]+ LDAP quer(y|ies) issued$' "$RESULTS/cache-3.txt"

@@ -164,7 +164,18 @@ async def test_opsec_shows_cache_hits_without_asking(cached):
 	gate.mode = 'confirm'
 	gate.start_command('query')
 	assert len(await search(conn)) == 1
-	assert out[0].startswith('[cache] DC=north')
+	assert out == ['[cache] (objectClass=user)  DC=north  scope=sub']
+	gate.end_command()
+	assert out[-1] == '[opsec] query: no LDAP queries issued, 1 answered from the cache'
+
+
+def test_summary_counts_sent_and_cached_queries():
+	out = []
+	gate = OpsecGate('show', out=out.append)
+	gate.start_command('find_admins')
+	gate.counter, gate.cached_counter = 2, 8
+	gate.end_command()
+	assert out == ['[opsec] find_admins: 2 LDAP queries issued, 8 answered from the cache']
 
 
 async def test_flush(cached):

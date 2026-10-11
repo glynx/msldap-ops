@@ -119,8 +119,10 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		dryrun   queries are printed but not sent; commands that build queries on the
 		         results of earlier ones (e.g. find_admins) only show their first stage
 
-		Covers every command, including the msldap built-ins. Background queries (keepalive)
-		are not shown or confirmed, they are recorded in the query journal.
+		Covers every command, including the msldap built-ins. Searches answered from the query
+		cache send nothing and are never confirmed; they are shown as one [cache] line and
+		counted separately. Background queries (keepalive) are not shown or confirmed. All of
+		them are recorded in the query journal.
 		"""
 		if mode is not None:
 			try:
