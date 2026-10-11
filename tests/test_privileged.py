@@ -1,4 +1,5 @@
 import datetime
+import re
 
 from winacl.dtyp.sid import SID
 
@@ -35,21 +36,23 @@ SQLADMINS = obj('CN=SQL Admins,CN=Users,' + BASE, sAMAccountName='SQL Admins', o
 	objectClass=['top', 'group'], member=[SVC['objectName'], CATELYN['objectName']])
 ADMWKS = obj('CN=ADMWKS01,CN=Computers,' + BASE, sAMAccountName='ADMWKS01$', objectSid='%s-1132' % DOM,
 	objectClass=['top', 'computer'], userAccountControl=0x1000)
+# DCs are in Domain Controllers through their primary group only, not through 'member'
 DC = obj('CN=WINTERFELL,OU=Domain Controllers,' + BASE, sAMAccountName='WINTERFELL$', objectSid='%s-1001' % DOM,
-	objectClass=['top', 'computer'], userAccountControl=0x2000 | 0x80000)
+	objectClass=['top', 'computer'], userAccountControl=0x2000 | 0x80000, primaryGroupID=516)
 
 GROUPS = {
 	'%s-512' % DOM: obj('CN=Domain Admins,CN=Users,' + BASE, sAMAccountName='Domänen-Admins', objectSid='%s-512' % DOM,
 		member=[EDDARD['objectName'], 'CN=S-1-5-21-7-7-7-1104,CN=ForeignSecurityPrincipals,' + BASE]),
 	'S-1-5-32-544': obj('CN=Administrators,CN=Builtin,' + BASE, sAMAccountName='Administrators', objectSid='S-1-5-32-544',
 		member=['CN=Domain Admins,CN=Users,' + BASE, CATELYN['objectName'], 'CN=Enterprise Admins,CN=Users,DC=sevenkingdoms,DC=local']),
-	'%s-516' % DOM: obj('CN=Domain Controllers,CN=Users,' + BASE, sAMAccountName='Domain Controllers', objectSid='%s-516' % DOM, member=[DC['objectName']]),
-	'%s-525' % DOM: obj('CN=Protected Users,CN=Users,' + BASE, objectSid='%s-525' % DOM),
+	'%s-516' % DOM: obj('CN=Domain Controllers,CN=Users,' + BASE, sAMAccountName='Domain Controllers', objectSid='%s-516' % DOM),
+	'%s-525' % DOM: obj('CN=Protected Users,CN=Users,' + BASE, objectSid='%s-525' % DOM, member=[ROBERT['objectName']]),
+	# exists, but has no members: no member query needed
+	'S-1-5-32-548': obj('CN=Account Operators,CN=Builtin,' + BASE, sAMAccountName='Account Operators', objectSid='S-1-5-32-548'),
 }
 MEMBERS = {
 	'CN=Domain Admins,CN=Users,' + BASE: [EDDARD, ROBERT],
 	'CN=Administrators,CN=Builtin,' + BASE: [GROUPS['%s-512' % DOM], EDDARD, ROBERT, CATELYN],
-	'CN=Domain Controllers,CN=Users,' + BASE: [DC],
 	'CN=Protected Users,CN=Users,' + BASE: [ROBERT],
 }
 
@@ -67,11 +70,14 @@ class FakeClient:
 	async def pagedsearch(self, query, attributes, controls=None, tree=None, search_scope=2):
 		self.queries.append(query)
 		results = []
-		if query.startswith('(objectSid='):
-			sid = query[len('(objectSid='):-1]
-			results = [GROUPS[sid]] if sid in GROUPS else []
-		elif query.startswith('(memberOf:1.2.840.113556.1.4.1941:='):
-			results = MEMBERS.get(query.split(':=', 1)[1][:-1], [])
+		if query.startswith('(|(objectSid='):
+			results = [GROUPS[sid] for sid in re.findall(r'\(objectSid=([^)]+)\)', query) if sid in GROUPS]
+		elif 'memberOf:1.2.840.113556.1.4.1941:=' in query:
+			dn = re.search(r':=([^)]+)\)', query).group(1)
+			results = list(MEMBERS.get(dn, []))
+			pg = re.search(r'\(primaryGroupID=(\d+)\)', query)
+			if pg:
+				results += [e for e in (EDDARD, ROBERT, CATELYN, DC) if str(e['attributes'].get('primaryGroupID')) == pg.group(1)]
 		elif 'trustedDomain' in query:
 			assert 'trustPartner=sevenkingdoms.local' in query
 			# msldap returns securityIdentifier as raw bytes
@@ -103,7 +109,9 @@ async def test_collect_privileged_accounts():
 	# forest root groups are looked up with the root SID from the trust and explained on a child DC
 	assert groups['Enterprise Admins'].sid == ROOT + '-519'
 	assert 'forest root sevenkingdoms.local' in groups['Enterprise Admins'].note
-	assert groups['Account Operators'].note == 'not found'
+	assert groups['Account Operators'].note is None and groups['Account Operators'].members == []
+	assert groups['Server Operators'].note == 'not found'
+	assert {m.name: m.groups['Domain Controllers'] for m in groups['Domain Controllers'].members} == {'WINTERFELL$': 'primary'}
 
 	accounts = {a.name: a for a in report.accounts.values()}
 	assert accounts['eddard.stark'].findings() == ['kerberoastable', 'delegable']
@@ -121,6 +129,18 @@ async def test_collect_privileged_accounts():
 	assert matches['SQL Admins'].members == 2
 	assert matches['ADMWKS01$'].account.kind == 'computer'
 	assert report.errors == []
+
+
+async def test_query_count():
+	client = FakeClient()
+	await privileged.collect(client)
+	# trust, one lookup for all groups, Protected Users members, members of the 3 groups that
+	# can have members (Account Operators is empty), adminCount, name search
+	assert len(client.queries) == 8, client.queries
+	# the forest root groups are not looked up on a child domain
+	assert not any(ROOT in q for q in client.queries)
+	lookup = client.queries[1]
+	assert '(objectSid=%s-525)' % DOM in lookup and '(sAMAccountName=DnsAdmins)' in lookup
 
 
 async def test_name_search_can_be_skipped():

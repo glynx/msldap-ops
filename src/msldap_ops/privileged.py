@@ -32,6 +32,7 @@ PROTECTED_USERS = '{domain}-525'
 USER_ATTRIBUTES = [
 	'sAMAccountName', 'distinguishedName', 'objectSid', 'objectClass', 'sAMAccountType',
 	'userAccountControl', 'adminCount', 'servicePrincipalName', 'pwdLastSet', 'lastLogonTimestamp',
+	'primaryGroupID',
 ]
 GROUP_ATTRIBUTES = ['sAMAccountName', 'distinguishedName', 'objectSid', 'member']
 
@@ -167,6 +168,7 @@ class GroupResult:
 	dn: Optional[str] = None
 	members: List[Account] = field(default_factory=list)
 	foreign: List[str] = field(default_factory=list)  # direct members outside the connected domain
+	direct: List[str] = field(default_factory=list)  # DNs in 'member'
 	note: Optional[str] = None
 
 
@@ -236,8 +238,37 @@ async def _root_domain_sid(client, errors):
 	return None, root_dns
 
 
+def member_values(entry):
+	"""Values of 'member', also when the server returns them ranged (member;range=0-1499)."""
+	for key, value in entry.get('attributes', {}).items():
+		lkey = key.lower()
+		if lkey == 'member' or lkey.startswith('member;range='):
+			return as_list(value)
+	return []
+
+
+def group_lookup_filter(sids, names):
+	"""One query for all privileged groups instead of one per group."""
+	parts = ['(objectSid=%s)' % sid for sid in sids]
+	parts += ['(&(objectCategory=group)(sAMAccountName=%s))' % escape_filter_value(name) for name in names]
+	return '(|%s)' % ''.join(parts)
+
+
+def members_filter(group_dn, group_sid, domain_sid):
+	"""Recursive members, plus accounts that have the group as primary group (e.g. DCs in
+	Domain Controllers), which are not listed in 'member'."""
+	chain = '(memberOf:%s:=%s)' % (IN_CHAIN, escape_filter_value(group_dn))
+	if domain_sid and group_sid.startswith(domain_sid + '-'):
+		return '(|%s(primaryGroupID=%s))' % (chain, group_sid.rsplit('-', 1)[1])
+	return chain
+
+
 async def collect(client, name_pattern=DEFAULT_NAME_PATTERN):
 	"""Gathers the privileged group memberships of the connected domain.
+
+	Queries: the trust object of the forest root (child domains only), one lookup for all
+	groups, the recursive members of Protected Users and of every group that has members,
+	the adminCount=1 users and the name search.
 
 	name_pattern: additionally lists users, computers and groups whose name or description
 	contains it (None or '' to skip).
@@ -255,40 +286,67 @@ async def collect(client, name_pattern=DEFAULT_NAME_PATTERN):
 		account = Account.from_entry(entry)
 		return accounts.setdefault(account.dn.lower(), account)
 
-	protected = set()
-	for entry in await _search(client, '(objectSid=%s)' % PROTECTED_USERS.format(domain=domain_sid), ['distinguishedName'], errors):
-		pu_dn = attr(entry, 'distinguishedName') or entry['objectName']
-		for member in await _search(client, '(memberOf:%s:=%s)' % (IN_CHAIN, pu_dn), ['objectSid'], errors):
-			protected.add(sid_string(attr(member, 'objectSid')))
-
-	lookups = [(name, sid, '(objectSid=%s)' % sid if sid else None) for name, sid in group_sids(domain_sid, root_sid)]
-	lookups += [(name, None, '(&(objectCategory=group)(sAMAccountName=%s))' % name) for name in NAMED_GROUPS]
-
 	groups = []
-	for name, sid, query in lookups:
+	wanted = {}  # SID -> GroupResult
+	for name, sid in group_sids(domain_sid, root_sid):
 		result = GroupResult(name, sid or '')
 		groups.append(result)
-		if query is None:
+		if sid is None:
 			result.note = 'forest root SID unknown'
-			continue
-		found = await _search(client, query, GROUP_ATTRIBUTES, errors)
-		if not found:
-			if root_is_remote and sid and root_sid and sid.startswith(root_sid + '-'):
-				result.note = 'lives in the forest root %s, connect to its DC to list the members' % root_dns
-			else:
-				result.note = 'not found'
-			continue
-		group = found[0]
-		result.dn = attr(group, 'distinguishedName') or group['objectName']
-		result.name = attr(group, 'sAMAccountName') or name
-		result.sid = sid_string(attr(group, 'objectSid')) or sid or ''
-		direct = {m.lower() for m in as_list(attr(group, 'member'))}
-		result.foreign = sorted(m for m in as_list(attr(group, 'member')) if _is_foreign(m, domain_dn))
+		elif root_is_remote and sid.startswith(root_sid + '-'):
+			# not stored on a DC of a child domain, no need to ask
+			result.note = 'lives in the forest root %s, connect to its DC to list the members' % root_dns
+		else:
+			wanted[sid] = result
+	named = {}
+	for name in NAMED_GROUPS:
+		result = GroupResult(name, '')
+		groups.append(result)
+		named[name.lower()] = result
 
-		for entry in await _search(client, '(memberOf:%s:=%s)' % (IN_CHAIN, result.dn), USER_ATTRIBUTES, errors):
+	protected_sid = PROTECTED_USERS.format(domain=domain_sid)
+	found = await _search(client, group_lookup_filter(list(wanted) + [protected_sid], NAMED_GROUPS), GROUP_ATTRIBUTES, errors)
+	protected_entry = None
+	for entry in found:
+		sid = sid_string(attr(entry, 'objectSid'))
+		if sid == protected_sid:
+			protected_entry = entry
+			continue
+		result = wanted.get(sid) or named.get(str(attr(entry, 'sAMAccountName', '')).lower())
+		if result is None or result.dn is not None:
+			continue
+		result.dn = attr(entry, 'distinguishedName') or entry['objectName']
+		result.name = attr(entry, 'sAMAccountName') or result.name
+		result.sid = sid
+		result.direct = member_values(entry)
+
+	protected = set()
+	if protected_entry is not None and member_values(protected_entry):
+		pu_dn = attr(protected_entry, 'distinguishedName') or protected_entry['objectName']
+		for member in await _search(client, '(memberOf:%s:=%s)' % (IN_CHAIN, escape_filter_value(pu_dn)), ['objectSid'], errors):
+			protected.add(sid_string(attr(member, 'objectSid')))
+
+	for result in groups:
+		if result.note is not None:
+			continue
+		if result.dn is None:
+			result.note = 'not found'
+			continue
+		result.foreign = sorted(m for m in result.direct if _is_foreign(m, domain_dn))
+		primary_possible = bool(domain_sid) and result.sid.startswith(domain_sid + '-')
+		if not result.direct and not primary_possible:
+			continue  # empty builtin / domain local group, nothing to ask for
+		direct = {m.lower() for m in result.direct}
+		for entry in await _search(client, members_filter(result.dn, result.sid, domain_sid), USER_ATTRIBUTES, errors):
 			account = account_for(entry)
 			account.protected_user = account.sid in protected
-			account.groups[result.name] = 'direct' if account.dn.lower() in direct else 'nested'
+			if account.dn.lower() in direct:
+				how = 'direct'
+			elif primary_possible and str(attr(entry, 'primaryGroupID', '')) == result.sid.rsplit('-', 1)[1]:
+				how = 'primary'
+			else:
+				how = 'nested'
+			account.groups[result.name] = how
 			result.members.append(account)
 
 	orphaned = []
