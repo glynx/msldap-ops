@@ -15,8 +15,8 @@
 #   NORTH_DC / ROOT_DC / ESSOS_DC                DC addresses of north.sevenkingdoms.local,
 #                                                sevenkingdoms.local and essos.local
 #   NORTH_USER / NORTH_PASS                      privileged accounts per domain, used by the
-#   ROOT_USER / ROOT_PASS                        live suite (defaults: the GOAD domain admins)
-#   ESSOS_USER / ESSOS_PASS
+#   ROOT_USER / ROOT_PASS                        live suite (defaults: GOAD domain admins that may use NTLM;
+#   ESSOS_USER / ESSOS_PASS                      robert.baratheon is in Protected Users)
 #   LOWPRIV_USER / LOWPRIV_PASS                  unprivileged NORTH account for the CLI tests
 #
 # Results end up in dev/results/<timestamp>/ (git-ignored).
@@ -35,8 +35,8 @@ ROOT_DC="${ROOT_DC:-192.168.56.10}"
 ESSOS_DC="${ESSOS_DC:-192.168.56.12}"
 NORTH_USER="${NORTH_USER:-eddard.stark}"
 NORTH_PASS="${NORTH_PASS:-FightP3aceAndHonor!}"
-ROOT_USER="${ROOT_USER:-robert.baratheon}"
-ROOT_PASS="${ROOT_PASS:-iamthekingoftheworld}"
+ROOT_USER="${ROOT_USER:-cersei.lannister}"
+ROOT_PASS="${ROOT_PASS:-il0vejaime}"
 ESSOS_USER="${ESSOS_USER:-daenerys.targaryen}"
 ESSOS_PASS="${ESSOS_PASS:-BurnThemAll!}"
 LOWPRIV_USER="${LOWPRIV_USER:-samwell.tarly}"
