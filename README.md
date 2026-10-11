@@ -261,6 +261,23 @@ the DACL, so `WriteDacl` on the target is enough (writing the owner would need `
 DC rejects it). `grant` is idempotent (an ACE already present is not added again). The change goes
 through opsec like any other, and `undo` restores the previous DACL.
 
+## Editing attributes
+
+`setattr`, `addattr` and `delattr` change an attribute directly, `uac` the account flags:
+
+```text
+setattr <path> <attribute> [value ...]   replace the value(s) (no value clears the attribute)
+addattr <path> <attribute> <value>       add one value to a multi-valued attribute
+delattr <path> <attribute> <value>       remove one value
+uac [path]                               show the userAccountControl flags
+uac <path> +FLAG -FLAG                    set (+) or clear (-) flags
+```
+
+Values are written as given, so attributes with a non-string syntax may be rejected by the server.
+`uac` flag names are those of `userAccountControl`, e.g. `+DONT_REQUIRE_PREAUTH` (AS-REP roasting),
+`+TRUSTED_FOR_DELEGATION`, `-ACCOUNTDISABLE`; a hex value also works. All of these are gated by
+opsec and undoable.
+
 ## Changes and undo
 
 Every directory change (add, modify, delete) is recorded in a session change log with its inverse,
