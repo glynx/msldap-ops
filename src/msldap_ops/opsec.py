@@ -46,13 +46,21 @@ def format_query(query, prefix='[ldap]'):
 
 async def default_ask(text):
 	from prompt_toolkit import PromptSession
-	return await PromptSession().prompt_async(text)
+	from prompt_toolkit.formatted_text import FormattedText
+
+	from msldap_ops import ui
+	return await PromptSession().prompt_async(FormattedText([('bold', text)]) if ui.enabled() else text)
+
+
+def default_out(line):
+	from msldap_ops import ui
+	ui.out(line)
 
 
 class OpsecGate:
 	"""Gate for msldap_ops.hooks, see the module docstring."""
 
-	def __init__(self, mode='off', ask=default_ask, out=print):
+	def __init__(self, mode='off', ask=default_ask, out=default_out):
 		self.mode = mode
 		self.ask = ask
 		self.out = out

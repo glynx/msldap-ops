@@ -7,7 +7,7 @@ from asyauth import logger as authlogger
 from asysocks import logger as sockslogger
 from msldap import logger as msldaplogger
 
-from msldap_ops import __version__, hooks
+from msldap_ops import __version__, hooks, ui
 from msldap_ops.cache import DEFAULT_CACHE_DIR, DEFAULT_TTL, QueryCache
 from msldap_ops.opsec import OpsecGate
 from msldap_ops.querylog import DEFAULT_LOG_DIR, QueryLog
@@ -15,6 +15,8 @@ from msldap_ops.shell import MSLDAPOpsConsole
 
 
 async def amain(args):
+	if args.no_color:
+		ui.set_enabled(False)
 	hooks.install()
 	querylog = None
 	if not args.no_log:
@@ -63,6 +65,7 @@ def main():
 	parser.add_argument('--cache-ttl', type=int, default=DEFAULT_TTL, metavar='SECONDS', help='How long cached search results are reused. Default: %(default)s')
 	parser.add_argument('--cache-memory-only', action='store_true', help='Keep the cache in memory only, do not write it to disk')
 	parser.add_argument('--no-cache', action='store_true', help='Disable the query cache')
+	parser.add_argument('--no-color', action='store_true', help='Plain output without colors (also: NO_COLOR environment variable)')
 	parser.add_argument('url', help='Connection string in msldap URL format')
 	parser.add_argument('commands', nargs='*', help="Commands to run in order. 'i' drops into the interactive shell. Without commands the shell starts after login.")
 	args = parser.parse_args()

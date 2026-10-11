@@ -59,9 +59,11 @@
 
 ## UX
 
-- [ ] Clearly separate prompt and command output; colored, structured output with
-      [rich](https://github.com/Textualize/rich) (tables, trees, highlighting) on top of the
-      prompt_toolkit based shell inherited from msldap
+- [x] Clearly separate prompt and command output; colored output with
+      [rich](https://github.com/Textualize/rich) on top of the plain text layout
+      (prompt_toolkit's patch_stdout runs with raw=True so that colors reach the terminal)
+- [ ] Try the colors interactively; decide whether `map`/`tree` should become rich trees
+- [ ] Colors for the output of the msldap built-in commands (they print directly)
 - [ ] Better command descriptions (parameters, allowed values) for the msldap-ops commands
 
 ## Release

@@ -1,11 +1,16 @@
 import asyncio
+import re
+import signal
+import sys
 
 from msldap.examples.msldapclient import MSLDAPClientConsole
 from msldap.protocol.constants import SUBTREE
 from msldap.wintypes.asn1.sdflagsrequest import SDFlagsRequest, SDFlagsRequestValue
+from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.patch_stdout import patch_stdout
 
-from msldap_ops import hooks, navigation, opsec, presets, privileged, templates
+from msldap_ops import hooks, navigation, opsec, presets, privileged, templates, ui
 
 
 def sd_flags_control():
@@ -16,6 +21,31 @@ def sd_flags_control():
 
 class MSLDAPOpsConsole(MSLDAPClientConsole):
 	"""msldap shell with additional msldap-ops commands. All msldap commands remain available."""
+
+	_prompt_dn = ''
+
+	@property
+	def prompt(self):
+		return ui.prompt(self._prompt_dn)
+
+	@prompt.setter
+	def prompt(self, value):
+		# msldap sets '[<DN>]> ' in several places
+		m = re.match(r'^\[(.*)\]> $', value or '')
+		self._prompt_dn = m.group(1) if m else (value or '').strip().rstrip('>').strip()
+
+	async def run(self):
+		"""aiocmd's run(), with patch_stdout(raw=True) so that colors reach the terminal."""
+		if self._ignore_sigint and sys.platform != 'win32':
+			asyncio.get_event_loop().add_signal_handler(signal.SIGINT, self._sigint_handler)
+		self.session = PromptSession(enable_history_search=True, key_bindings=self._get_bindings())
+		try:
+			with patch_stdout(raw=True):
+				await self._run_prompt_forever()
+		finally:
+			if self._ignore_sigint and sys.platform != 'win32':
+				asyncio.get_event_loop().remove_signal_handler(signal.SIGINT)
+			self._on_close()
 
 	def __init__(self, url=None, querylog=None, gate=None, keepalive=300, cache=None):
 		MSLDAPClientConsole.__init__(self, url)
@@ -89,8 +119,7 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			self.cache.enabled = action == 'on'
 		elif action == 'list':
 			rows = [['age', 'results', 'base', 'filter']] + [['%ds' % a, str(n), b, f] for a, n, b, f in self.cache.list_queries()]
-			for line in privileged.table(rows, 2):
-				print(line)
+			ui.emit(privileged.table(rows, 2))
 			return True
 		elif action:
 			print("Unknown action '%s', see 'help cache'" % action)
@@ -195,7 +224,7 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			return False
 
 		if self.querylog is None or not self.querylog.enabled:
-			print('WARNING: query logging is off, the results are not saved')
+			ui.out('WARNING: query logging is off, the results are not saved')
 
 		total, failed = 0, 0
 		width = max(len('%s/%s' % (q.preset, q.label)) for q in queries)
@@ -207,9 +236,9 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			total += count
 			if err is not None:
 				failed += 1
-				print('  %s  %5d  error: %s' % (name, count, err))
+				ui.out('  %s  %5d  error: %s' % (name, count, err))
 			else:
-				print('  %s  %5d' % (name, count))
+				ui.out('  %s  %5d' % (name, count))
 
 		print('%d objects from %d queries, %d failed' % (total, len(queries), failed))
 		if self.querylog is not None and self.querylog.enabled:
@@ -259,8 +288,7 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			print('Not connected, run login first')
 			return False
 		report = await privileged.collect(self.connection, None if pattern == '-' else pattern)
-		for line in privileged.format_report(report):
-			print(line)
+		ui.emit(privileged.format_report(report))
 		return not report.errors
 
 	async def do_templates(self, selection=None):
@@ -288,10 +316,9 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		name = None if mode in ('', 'vulnerable', 'enabled') else selection
 		report = await templates.collect(self.connection, name)
 		if report.note:
-			print('Note: %s' % report.note)
+			ui.out('Note: %s' % report.note)
 		if mode == '':
-			for line in templates.summary_lines(report):
-				print(line)
+			ui.emit(templates.summary_lines(report))
 			print('Vulnerabilities checked for %s. Details: templates <name>' % report.principal)
 			return True
 
@@ -305,8 +332,7 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			return name is None
 		for info in selected:
 			principals = await templates.resolve_principals(self.connection, info)
-			for line in templates.detail_lines(info, principals, report.principal):
-				print(line)
+			ui.emit(templates.detail_lines(info, principals, report.principal))
 			print()
 		return True
 
@@ -390,8 +416,7 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			print(e)
 			return False
 		lines = navigation.tree_lines(self._known_dns(), root, depth or None)
-		for line in lines:
-			print(line)
+		ui.emit(lines)
 		if len(lines) == 1:
 			print("(nothing seen below this DN yet; 'tree' asks the DC)")
 		else:

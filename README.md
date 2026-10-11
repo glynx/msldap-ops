@@ -195,6 +195,13 @@ The msldap shell sends a keepalive search on the domain object every 10 seconds.
 300 seconds; `--keepalive SECONDS` changes it, `--keepalive 0` stops it after the login. Keepalive
 queries are not shown or confirmed and not written to the bofhound log, only to the journal.
 
+## Output
+
+The prompt (`msldap-ops <DN> >`) is colored so that it stands out from the command output. The
+msldap-ops commands keep their plain text layout and add colors on top: findings and `[!]` marks in
+red, weaker findings in yellow, opsec lines in yellow/cyan. Without a terminal (pipes, files) the
+output is plain text; `--no-color` or the `NO_COLOR` environment variable switch colors off.
+
 ## Development
 
 ```bash
