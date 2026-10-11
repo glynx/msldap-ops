@@ -23,6 +23,13 @@
 - [ ] Verify `find_admins` against GOAD (`dev/goad-test-ops.sh`)
 - [ ] `find_admins` across the forest: resolve forest root group members via a second connection or the GC
 
+## Opsec
+
+- [x] `opsec off|show|confirm|dryrun` for every search, `--opsec`, query count per command
+- [x] Keepalive every 300 s instead of 10 s, `--keepalive`
+- [ ] Verify against GOAD (`dev/goad-test-ops.sh`), try `confirm` interactively
+- [ ] Optional jitter for `bofhound_collect` delays
+
 ## Navigation
 
 - [ ] Cache of all DNs seen so far (optionally persisted per target)

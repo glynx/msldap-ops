@@ -8,17 +8,20 @@ from asysocks import logger as sockslogger
 from msldap import logger as msldaplogger
 
 from msldap_ops import __version__, hooks
+from msldap_ops.opsec import OpsecGate
 from msldap_ops.querylog import DEFAULT_LOG_DIR, QueryLog
 from msldap_ops.shell import MSLDAPOpsConsole
 
 
 async def amain(args):
+	hooks.install()
 	querylog = None
 	if not args.no_log:
 		querylog = QueryLog(args.log_dir)
-		hooks.install()
 		hooks.add_listener(querylog)
-	console = MSLDAPOpsConsole(args.url, querylog=querylog)
+	gate = OpsecGate(args.opsec)
+	hooks.set_gate(gate)
+	console = MSLDAPOpsConsole(args.url, querylog=querylog, gate=gate, keepalive=args.keepalive)
 	if len(args.commands) == 0:
 		res = await console._run_single_command('login', [])
 		if res is False:
@@ -46,6 +49,8 @@ def main():
 	parser.add_argument('-v', '--verbose', action='count', default=0, help='Verbosity, can be stacked')
 	parser.add_argument('--log-dir', default=DEFAULT_LOG_DIR, help='Directory for the bofhound compatible query log, relative to the current directory. Default: %(default)s')
 	parser.add_argument('--no-log', action='store_true', help='Do not log search results')
+	parser.add_argument('--opsec', choices=['off', 'show', 'confirm'], default='off', help="Show or confirm every LDAP search, including the ones during login (see 'help opsec'). Default: %(default)s")
+	parser.add_argument('--keepalive', type=int, default=300, metavar='SECONDS', help='Interval of the keepalive search on the domain object, 0 disables it (msldap: 10). Default: %(default)s')
 	parser.add_argument('url', help='Connection string in msldap URL format')
 	parser.add_argument('commands', nargs='*', help="Commands to run in order. 'i' drops into the interactive shell. Without commands the shell starts after login.")
 	args = parser.parse_args()

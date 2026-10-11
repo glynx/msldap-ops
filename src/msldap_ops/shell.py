@@ -5,7 +5,7 @@ from msldap.protocol.constants import SUBTREE
 from msldap.wintypes.asn1.sdflagsrequest import SDFlagsRequest, SDFlagsRequestValue
 from prompt_toolkit.completion import WordCompleter
 
-from msldap_ops import presets, privileged
+from msldap_ops import hooks, opsec, presets, privileged
 
 
 def sd_flags_control():
@@ -17,9 +17,67 @@ def sd_flags_control():
 class MSLDAPOpsConsole(MSLDAPClientConsole):
 	"""msldap shell with additional msldap-ops commands. All msldap commands remain available."""
 
-	def __init__(self, url=None, querylog=None):
+	def __init__(self, url=None, querylog=None, gate=None, keepalive=300):
 		MSLDAPClientConsole.__init__(self, url)
 		self.querylog = querylog
+		self.gate = gate if gate is not None else opsec.OpsecGate()
+		self.keepalive = keepalive
+
+	async def _run_single_command(self, command, args):
+		# the task running the command; queries from other tasks (keepalive) are background
+		hooks.set_foreground(asyncio.current_task())
+		self.gate.start_command(command)
+		try:
+			return await MSLDAPClientConsole._run_single_command(self, command, args)
+		finally:
+			self.gate.end_command()
+			hooks.set_foreground(None)
+
+	async def do_login(self, url=None):
+		"""Performs connection and login"""
+		res = await MSLDAPClientConsole.do_login(self, url)
+		if self.connection is not None:
+			self._apply_keepalive()
+		return res
+
+	def _apply_keepalive(self):
+		# msldap's shell sends a keepalive search on the domain object every 10 seconds
+		if self.keepalive and self.keepalive > 0:
+			self.connection.keepalive_period = self.keepalive
+			return
+		task = getattr(self.connection, '_MSLDAPClient__keepalive_task', None)
+		if task is not None:
+			task.cancel()
+
+	async def do_opsec(self, mode=None):
+		"""Shows or sets the opsec mode for LDAP searches.
+
+		off      queries are sent without notice (default)
+		show     every query is printed before it is sent
+		confirm  every query is printed and needs confirmation:
+		         y = send, n = skip (the command gets an empty result),
+		         a = send all further queries of this command, q = abort the command
+		dryrun   queries are printed but not sent; commands that build queries on the
+		         results of earlier ones (e.g. find_admins) only show their first stage
+
+		Covers every command, including the msldap built-ins. Background queries (keepalive)
+		are not shown or confirmed, they are recorded in the query journal.
+		"""
+		if mode is not None:
+			try:
+				self.gate.set_mode(mode.lower())
+			except ValueError as e:
+				print(e)
+				return False
+		print('opsec mode: %s' % self.gate.mode)
+		if self.keepalive and self.keepalive > 0:
+			print('keepalive: every %d seconds' % self.keepalive)
+		else:
+			print('keepalive: off')
+		return True
+
+	def _opsec_completions(self):
+		return WordCompleter(list(opsec.MODES))
 
 	async def do_log(self, action=None):
 		"""Shows or switches the bofhound query log.

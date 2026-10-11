@@ -144,7 +144,8 @@ class QueryLog:
 				f.write(text)
 
 	def query_entry(self, query, entry):
-		if not self.enabled:
+		# background queries (keepalive) return the same domain object over and over
+		if not self.enabled or query.background:
 			return
 		raw = getattr(entry, 'raw', None)
 		if raw is None or not is_identifiable(raw):
@@ -157,7 +158,8 @@ class QueryLog:
 		if not self.enabled:
 			return
 		logged = getattr(query, 'logged', 0)
-		self._write('records', 'Retrieved %d results total\n' % logged)
+		if not query.background and not query.skipped:
+			self._write('records', 'Retrieved %d results total\n' % logged)
 		record = query.to_dict()
 		record['logged'] = logged
 		self._write('queries', json.dumps(record) + '\n')

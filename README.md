@@ -12,6 +12,8 @@ Features:
 - **Collection presets** for bofhound, split per object type (users, computers, groups, OUs, GPOs,
   schema, ADCS, ...), so that no single query returns the whole directory.
 
+- **Opsec modes** (`opsec`): show, confirm or suppress every LDAP search before it is sent, for all
+  commands including the msldap built-ins.
 - **Privileged accounts** (`find_admins`): recursive members of the protected groups, found by SID, with
   their risky settings.
 
@@ -102,6 +104,26 @@ root groups can only be listed on a DC of the forest root.
 
 In the shell, `log` shows the log files, `log off` / `log on` pause and resume logging.
 `--log-dir` changes the directory, `--no-log` disables logging completely.
+
+## Opsec
+
+`opsec <mode>` (or `--opsec show|confirm` on the command line, which also covers the login) controls
+what happens before an LDAP search is sent:
+
+- `off`: nothing (default)
+- `show`: the query (base, scope, filter, attributes, controls) is printed before it is sent
+- `confirm`: the query is printed and needs confirmation: `y` send, `n` skip (the command gets an
+  empty result), `a` send all further queries of the running command, `q` abort the command
+- `dryrun`: queries are printed but not sent. Commands that build queries on the results of earlier
+  ones (e.g. `find_admins`) only show their first stage; `help <command>` lists the queries of the
+  msldap-ops commands.
+
+After each command the number of queries is printed. Every query, including skipped ones, is
+recorded in the query journal.
+
+The msldap shell sends a keepalive search on the domain object every 10 seconds. msldap-ops uses
+300 seconds; `--keepalive SECONDS` changes it, `--keepalive 0` stops it after the login. Keepalive
+queries are not shown or confirmed and not written to the bofhound log, only to the journal.
 
 ## Development
 

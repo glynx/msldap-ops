@@ -123,6 +123,17 @@ echo "   INFO  $(grep -E "^Name or description contains" "$RESULTS/admins-north.
 echo "   INFO  findings on north: $(grep -oE '(kerberoastable|asrep-roastable|password-never-expires|unconstrained-delegation|delegable|password-not-required)' "$RESULTS/admins-north.txt" | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
 
 echo
+echo "== opsec"
+"$OPS" --no-log --opsec show "$URL" login find_admins >"$RESULTS/opsec-show.txt" 2>&1 || true
+check "show prints the queries before they are sent" '^\[ldap #1\] DC=' "$RESULTS/opsec-show.txt"
+check "show reports the number of queries per command" '^\[opsec\] find_admins: [0-9]+ LDAP quer(y|ies) issued$' "$RESULTS/opsec-show.txt"
+echo "   INFO  $(grep -E '^\[opsec\] (login|find_admins):' "$RESULTS/opsec-show.txt" | tr '\n' ';')"
+"$OPS" --no-log "$URL" login "opsec dryrun" "bofhound_collect all" >"$RESULTS/opsec-dryrun.txt" 2>&1 || true
+check "dryrun shows the queries" '^\[dryrun #1\] ' "$RESULTS/opsec-dryrun.txt"
+check "dryrun sends nothing" '^0 objects from [0-9]+ queries, 0 failed$' "$RESULTS/opsec-dryrun.txt"
+check "dryrun summary" '^\[opsec\] bofhound_collect: [0-9]+ LDAP queries shown, none sent$' "$RESULTS/opsec-dryrun.txt"
+
+echo
 echo "== bofhound import"
 # dnsNode parsing needs bofhound >= 0.4.21; without a version uvx may reuse an older cached one
 BOFHOUND=(uvx --from 'bofhound>=0.4.21' bofhound)

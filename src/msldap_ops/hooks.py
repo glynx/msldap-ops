@@ -10,7 +10,15 @@ msldap has no callback mechanism for search results, so we patch two places:
 
 Listeners implement any subset of ``query_start(query)``, ``query_entry(query, entry)`` and
 ``query_end(query)``. Exceptions raised by listeners are logged and never break the query.
+
+A gate (see :func:`set_gate`) is asked before a query is sent and can let it through, skip it
+(the caller gets an empty result) or abort it (the caller gets an error).
+
+Queries that do not run in the foreground task (see :func:`set_foreground`), e.g. msldap's
+keepalive, are marked as ``background``.
 """
+
+import asyncio
 
 import datetime
 import functools
@@ -26,6 +34,15 @@ SCOPE_NAMES = {0: 'base', 1: 'one', 2: 'sub'}
 
 _listeners = []
 _originals = {}
+_gate = None
+_foreground = None
+
+SEND = 'send'
+SKIP = 'skip'
+
+
+class QueryAborted(Exception):
+	pass
 
 
 class SearchEntry(dict):
@@ -47,6 +64,8 @@ class QueryInfo:
 		self.finished = None
 		self.count = 0
 		self.error = None
+		self.background = _is_background()
+		self.skipped = False
 
 	def to_dict(self):
 		return {
@@ -60,6 +79,8 @@ class QueryInfo:
 			'controls': self.controls,
 			'count': self.count,
 			'error': None if self.error is None else str(self.error),
+			'background': self.background,
+			'skipped': self.skipped,
 		}
 
 
@@ -78,6 +99,27 @@ def _server_name(connection):
 		if value:
 			return str(value)
 	return None
+
+
+def _is_background():
+	if _foreground is None:
+		return False
+	try:
+		return asyncio.current_task() is not _foreground
+	except RuntimeError:
+		return False
+
+
+def set_foreground(task):
+	"""Marks the task of the command currently running; queries from other tasks are background."""
+	global _foreground
+	_foreground = task
+
+
+def set_gate(gate):
+	"""gate: async callable(QueryInfo) -> SEND or SKIP, may raise QueryAborted. None removes it."""
+	global _gate
+	_gate = gate
 
 
 def add_listener(listener):
@@ -116,7 +158,7 @@ def _wrap_search(original, controls_param, passthrough=None):
 		bound = signature.bind(self, *args, **kwargs)
 		bound.apply_defaults()
 		params = bound.arguments
-		if not _listeners or (passthrough is not None and params.get(passthrough)):
+		if (not _listeners and _gate is None) or (passthrough is not None and params.get(passthrough)):
 			async for item in original(self, *args, **kwargs):
 				yield item
 			return
@@ -129,6 +171,22 @@ def _wrap_search(original, controls_param, passthrough=None):
 			params['search_scope'],
 			_flatten_controls(params.get(controls_param)),
 		)
+		if _gate is not None:
+			try:
+				decision = await _gate(info)
+			except QueryAborted as e:
+				info.error = e
+				info.skipped = True
+				info.finished = datetime.datetime.now(datetime.timezone.utc)
+				_notify('query_end', info)
+				yield None, e
+				return
+			if decision == SKIP:
+				info.skipped = True
+				info.finished = datetime.datetime.now(datetime.timezone.utc)
+				_notify('query_end', info)
+				return
+
 		_notify('query_start', info)
 		try:
 			async for entry, err in original(self, *args, **kwargs):
