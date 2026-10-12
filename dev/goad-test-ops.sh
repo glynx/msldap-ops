@@ -181,6 +181,13 @@ check "after a flush the queries are sent again" '^\[opsec\] find_admins: [0-9]+
 check "templates reuses the ADCS data of bofhound_collect" '^\[opsec\] templates: 2 LDAP queries sent, 2 answered from the cache$' "$RESULTS/cache-4.txt"
 
 echo
+echo "== delegation"
+"$OPS" --no-cache --no-log "$URL" login delegations >"$RESULTS/deleg.txt" 2>&1 || true
+check "delegation overview has all three sections" 'Resource-based constrained delegation' "$RESULTS/deleg.txt"
+INFO_DELEG=$(grep -E '^(Unconstrained|Constrained|Resource-based)' "$RESULTS/deleg.txt" | tr '\n' ';')
+echo "   INFO  $INFO_DELEG"
+
+echo
 echo "== navigation"
 "$OPS" --no-log --cache-dir "$RESULTS/cache-nav" "$URL" login "cd .." "cd CN=Users" "cd .." "map . 2" \
   "cd CN=Configuration,DC=sevenkingdoms,DC=local" map "cd ../.." >"$RESULTS/navigation.txt" 2>&1 || true
