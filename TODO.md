@@ -8,7 +8,7 @@
       (`./msldap-ops-logs/`), verified against the bofhound parser (offline roundtrip)
 - [x] Verify the query log against GOAD (`dev/goad-test-ops.sh`)
 - [x] SD flags control by default when `nTSecurityDescriptor` is requested (`query` in the fork)
-- [ ] Optional per-query output file (like pyldapsearch `-output`)
+- [~] Per-query output file: covered by output redirection (`query ... > file`) and the query log
 - [x] Session transcript (`transcript on|off`, `--transcript [file]`)
 
 ## Presets
