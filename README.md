@@ -4,11 +4,23 @@ Operator toolkit for Active Directory on top of [msldap](https://github.com/skel
 It adds directory navigation, enumeration, permission review and controlled changes to the msldap shell.
 The dependency is the [glynx/msldap fork](https://github.com/glynx/msldap), which carries additional fixes.
 
-- Browse AD with relative paths, completion, object icons and Rich trees.
-- Collect directory data for BloodHound using presets and [bofhound](https://github.com/coffeegist/bofhound).
-- Review privileged accounts, delegations, trusts, certificate templates, CA object ACLs and LAPS permissions.
-- Reduce repeated queries with persistent caches and reuse known SID names across domain connections.
-- Show or confirm LDAP operations, track changes and undo supported writes.
+![msldap-ops demo: directory navigation, delegation, ADCS checks, collection and undo](docs/assets/demo.gif)
+
+- **Directory navigation:** `cd`, `ls`, `cat`, `find`, `tree` and a query-free `map`, with relative
+  paths, completion, object icons and dimmed disabled accounts. [Navigation](docs/navigation.md)
+- **Enumeration:** `find_admins` finds privileged accounts by SID and flags interesting account
+  settings; `delegations` separates unconstrained, constrained and RBCD; `trusts` shows domain relationships.
+- **Permission review:** readable `acl` output decodes AD rights and resolves principals;
+  `laps_permissions` reviews LAPS read permissions without requesting passwords. [Permissions](docs/permissions.md)
+- **ADCS checks:** `templates` checks ESC1–4, ESC9 and ESC13 for the evaluated token, with separate
+  review hints; `cas` reviews CA directory-object permissions. [ADCS](docs/adcs.md)
+- **BloodHound collection:** choose presets, include ACLs and DNS, add delay or jitter, and import
+  query logs with [bofhound](https://github.com/coffeegist/bofhound). [Queries and collection](docs/queries.md)
+- **Cache and identities:** reuse query results and known SID names across explicit domain
+  connections; older identity labels show when they were last seen. [Cache](docs/operations.md#query-cache)
+- **Controlled changes:** `opsec` shows operations, previews them with `dryrun`, or confirms writes
+  with `confirm-write`. Inspect `changes`, `undo` supported writes, and add or selectively remove
+  shadow credentials with `keycred`. [Changes and cleanup](docs/changes.md)
 
 ## Installation
 

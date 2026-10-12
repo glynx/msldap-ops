@@ -50,3 +50,19 @@ MSLDAP_DIR=git dev/goad-test-ops.sh
 Results are written to `dev/results/ops-<timestamp>/`, which is ignored by Git.
 The runner performs live LDAP queries; local unit tests do not verify lab connectivity or
 the behavior of a real DC.
+
+## README demo
+
+[dev/render-demo.py](../dev/render-demo.py) builds [the animated preview](assets/demo.gif) using
+the shell commands and renderers with a fictional directory held in memory. It makes no network
+connections and does not read credentials, query logs or caches from an engagement. The write
+and undo chapter changes only the in-memory fixture. Results illustrate the UI, not a live AD assessment.
+
+```bash
+uv run --with pillow python dev/render-demo.py
+```
+
+Rendering needs DejaVu Sans Mono (regular and bold) and DejaVu Sans for the feature descriptions;
+`--font /path/to/monospace.ttf` overrides them.
+Noto Color Emoji is used for object icons when installed. Pillow is needed only to rebuild the
+preview and is not a runtime dependency. The script also exports `docs/assets/demo.png` as a still.

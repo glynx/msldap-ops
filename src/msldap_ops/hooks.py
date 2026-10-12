@@ -364,7 +364,8 @@ class WriteInfo:
 		elif operation == 'modify':
 			for attribute, ops in (changes or {}).items():
 				for op, value in ops:
-					values = value if isinstance(value, (list, tuple)) else [value]
+					values = value.encode() if isinstance(value, RawValue) else value
+					values = values if isinstance(values, (list, tuple)) else [values]
 					self.changes.append((op, attribute, [change_value(attribute, v) for v in values]))
 					self.modify_ops.append((op, attribute, value))
 		self.started = datetime.datetime.now(datetime.timezone.utc)

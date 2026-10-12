@@ -110,6 +110,20 @@ def test_secrets_and_descriptors_in_the_display(gate):
 	assert out[-1].endswith('... (800 characters)')
 
 
+@pytest.mark.parametrize('attribute,values,expected', [
+	('description', [b'Original value'], ['Original value']),
+	('servicePrincipalName', [b'HTTP/app01', b'CIFS/app01'], ['HTTP/app01', 'CIFS/app01']),
+	('description', [], []),
+	('unicodePwd', [b'Secret1!'], ['<hidden>']),
+])
+def test_undo_raw_values_are_readable_without_changing_the_payload(attribute, values, expected):
+	payload = hooks.RawValue(values)
+	info = hooks.WriteInfo('dc01', 'modify', 'CN=demo,DC=x', {attribute: [('replace', payload)]})
+	assert info.changes == [('replace', attribute, expected)]
+	assert info.modify_ops == [('replace', attribute, payload)]
+	assert payload.encode() == values
+
+
 def test_changes_are_journaled(gate, tmp_path):
 	gate, out = gate
 	gate.set_mode('off')
