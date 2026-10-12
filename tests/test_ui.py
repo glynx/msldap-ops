@@ -61,10 +61,20 @@ def test_records_are_separated_on_the_terminal(color):
 
 def test_styles():
 	assert ('True [!]', 'bold red') in spans('  Enrollee Supplies Subject       : True [!]')
+	assert spans('  [review] WriteDacl') == [('[review]', 'yellow')]
 	for line in ['[cache] (a=b)  DC=x  scope=sub', '[ldap #1] DC=x  scope=sub', '          filter: (a=b)',
 			'          attributes: *,nTSecurityDescriptor  controls: sd-flags', '[dryrun #2] DC=x  scope=one']:
 		assert spans(line) == [(line, 'bright_black')]
 	assert spans('send? [y]es / [n]o, skip') == [('send? [y]es / [n]o, skip', 'bold')]
+
+
+def test_disabled_dn_is_gray_instead_of_bold_cyan():
+	from rich.console import Console
+	line = 'DN: 👤 CN=disabled,DC=x [disabled]  (from cache: 2026-10-12 10:00)'
+	text = ui.styled(line)
+	style = text.get_style_at_offset(Console(), line.index('CN='))
+	assert style.color.name == 'bright_black' and style.bold is False
+	assert text.plain == line
 
 
 def test_no_color_environment(monkeypatch):
@@ -99,6 +109,12 @@ def test_esc_only_highlighted_as_finding():
 	# templates table: the name column stays plain, the vulnerabilities column is highlighted
 	row = '  ESC1         ESSOS-CA  yes          yes               no        ESC1, ESC9'
 	assert spans(row) == [('ESC1, ESC9', 'bold red')]
+	assert spans('  ESC4  ESSOS-CA  no  no  yes  ESC4 [?]') == [('ESC4 [?]', 'yellow')]
+	assert spans('  Custom  ESSOS-CA  yes  no  no  ESC1, ESC4 [?], ESC9') == [
+		('ESC1', 'bold red'), ('ESC9', 'bold red'), ('ESC4 [?]', 'yellow')]
+	assert spans('  Custom  ESSOS-CA  yes  no  no  ESC13 [?], ESC4 [?]') == [
+		('ESC13 [?]', 'yellow'), ('ESC4 [?]', 'yellow')]
+	assert not any(style == 'bold red' for _, style in spans('    [review] ESC4 ACL             : Other principals can control the template'))
 
 
 def test_password_never_expires_is_not_colored():
@@ -139,3 +155,18 @@ def test_styled_stream_keeps_the_terminal_reachable():
 	assert stream.fileno() == sys.__stdout__.fileno()
 	assert stream.encoding == sys.__stdout__.encoding
 	assert ui.StyledStream(io.StringIO()).encoding is None
+
+
+def test_deferred_inner_stream_does_not_restyle_help(color):
+	import io
+	from contextlib import redirect_stdout
+	pending = io.StringIO()
+	with redirect_stdout(ui.StyledStream(pending)):
+		MSLDAPOpsConsole(None).do_help('spns')
+	# prompt_toolkit forwards output later, after the help context has ended.
+	target = io.StringIO()
+	inner = ui.StyledStream(target)
+	inner.style_output = False
+	inner.write(pending.getvalue())
+	assert 'kerberoastable' in target.getvalue()
+	assert '\x1b[31m' not in target.getvalue()

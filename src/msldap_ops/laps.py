@@ -20,6 +20,19 @@ ATTRIBUTES = ['cn', 'sAMAccountName'] + LEGACY_ATTRIBUTES + WINDOWS_ATTRIBUTES
 COMPUTER_FILTER = '(sAMAccountType=805306369)'
 
 
+def search_target(target, current_dn, domain_dn):
+	"""Shared computer selection for password reads and permission review."""
+	from msldap.protocol.constants import BASE, SUBTREE
+	from msldap_ops import navigation
+	if target in ('', '.'):
+		return current_dn, COMPUTER_FILTER, BASE
+	if target == 'all':
+		return domain_dn, COMPUTER_FILTER, SUBTREE
+	value = navigation.escape_glob(target if target.endswith('$') or '*' in target else target + '$')
+	name = navigation.escape_glob(target)
+	return domain_dn, '(&%s(|(sAMAccountName=%s)(name=%s)))' % (COMPUTER_FILTER, value, name), SUBTREE
+
+
 def _attr(entry, name):
 	attributes = entry['attributes']
 	for key, value in attributes.items():

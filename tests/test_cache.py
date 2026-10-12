@@ -56,6 +56,24 @@ def test_raw_roundtrip():
 	assert raw_from_json(json.loads(json.dumps(raw_to_json(raw)))) == raw
 
 
+def test_object_class_metadata_uses_fresh_results_and_respects_cache_off(tmp_path):
+	cache = QueryCache(str(tmp_path), ttl=60, persist=False)
+	dn = 'CN=test,DC=north'
+	def raw(kind, status):
+		return {'objectName': dn.encode(), 'attributes': [
+			{'type': b'objectClass', 'attributes': [b'top', kind]},
+			{'type': b'userAccountControl', 'attributes': [status]}]}
+	cache.put('old', {}, [raw(b'container', b'514')])
+	cache.put('new', {}, [raw(b'group', b'512')])
+	cache.put('expired', {}, [raw(b'user', b'514')])
+	cache.queries['expired']['stored'] = time.time() - 61
+	assert cache.object_classes() == {dn.lower(): ['top', 'group']}
+	assert cache.object_metadata()[dn.lower()]['useraccountcontrol'] == '512'
+	cache.enabled = False
+	assert cache.object_classes() == {}
+	assert cache.object_metadata() == {}
+
+
 def test_key_depends_on_what_changes_the_result():
 	base = {'base': 'DC=north', 'query': '(a=b)', 'attributes': [b'cn', b'name'], 'search_scope': 2}
 	k = query_key('pagedsearch', base)[0]
@@ -77,6 +95,89 @@ async def test_repeated_search_is_answered_from_the_cache(cached):
 	assert second[0][0].raw == first[0][0].raw
 	assert cached.hits == 1
 	assert 'cn=jon.snow,cn=users,dc=north,dc=sevenkingdoms,dc=local' in cached.dns
+
+
+@pytest.mark.parametrize('sam', [b'jon.snow', None])
+async def test_sid2dn_collects_identity_in_one_query(cached, sam, capsys):
+	from msldap.client import MSLDAPClient
+	from msldap_ops import acl
+	from msldap_ops.cache import project
+
+	entry = raw_entry()
+	if sam is not None:
+		entry['attributes'].append({'type': b'sAMAccountName', 'attributes': [sam]})
+	wire = CountingConnection([entry])
+
+	async def projecting_search(base, query, attributes, **kwargs):
+		# A real DC only returns the requested attributes; the default fake returns all.
+		wanted = {'attributes': [a.decode().lower() for a in attributes]}
+		for raw in wire.entries:
+			yield {'protocolOp': project(raw, wanted), 'controls': None}, None
+		yield {'protocolOp': {'resultCode': 'success', 'diagnosticMessage': ''}, 'controls': []}, None
+
+	wire.search = projecting_search
+	client = MSLDAPClient(None, None, connection=wire)
+	client._tree = 'DC=north,DC=sevenkingdoms,DC=local'
+	console = MSLDAPOpsConsole(None, cache=cached)
+	console.connection = client
+	assert await console.do_sid2dn(USER_SID) is True
+	assert capsys.readouterr().out == entry['objectName'].decode() + '\n'
+	assert wire.server_calls == 1
+	identity = cached.identities.get('principal', USER_SID)
+	if sam is None:
+		assert identity is None  # Do not guess an account name from its CN.
+	else:
+		assert identity['name'] == 'jon.snow'
+		assert identity['dn'] == entry['objectName'].decode()
+		assert identity['server'] == '10.0.0.1'
+	assert await console.do_sid2dn(USER_SID) is True
+	assert wire.server_calls == 1
+	assert cached.identities.get('principal', USER_SID) == identity
+	if sam is not None:
+		cached.flush()
+		foreign = MSLDAPClient(None, None)
+		foreign.domainsid = 'S-1-5-21-9-8-7'
+		assert (await acl.resolve(foreign, [USER_SID], cached))[USER_SID] == 'north.sevenkingdoms.local\\jon.snow'
+
+
+async def test_sid2dn_missing_object_does_not_create_identity(cached, capsys):
+	from msldap.client import MSLDAPClient
+	wire = CountingConnection([])
+	client = MSLDAPClient(None, None, connection=wire)
+	client._tree = 'DC=north'
+	console = MSLDAPOpsConsole(None, cache=cached)
+	console.connection = client
+	assert await console.do_sid2dn(USER_SID) is False
+	assert 'not found' in capsys.readouterr().out
+	assert cached.identities.rows() == []
+	assert wire.server_calls == 1
+
+
+async def test_navigation_metadata_reuses_cached_listing_and_object_read(cached, monkeypatch, capsys):
+	from msldap.client import MSLDAPClient
+	from msldap_ops import ui
+
+	domain = 'DC=north,DC=sevenkingdoms,DC=local'
+	dn = 'CN=jon.snow,CN=Users,' + domain
+	entry = raw_entry(dn)
+	entry['attributes'].append({'type': b'userAccountControl', 'attributes': [b'514']})
+	wire = CountingConnection([entry])
+	client = MSLDAPClient(None, None, connection=wire)
+	client._tree = domain
+	client._serverinfo = {'namingContexts': [domain]}
+	console = MSLDAPOpsConsole(None, cache=cached)
+	console.connection = client
+	console._current_dn = domain
+	monkeypatch.setattr(ui, 'output_width', lambda: 140)
+	assert await console.do_cd('CN=Users') is True
+	assert wire.server_calls == 1
+	assert await console.do_ls() is True
+	assert await console.do_ls('CN=Users,' + domain) is True  # same one-level query
+	assert await console.do_cat(dn, 'distinguishedName') is True  # class already cached
+	assert wire.server_calls == 1
+	out = capsys.readouterr().out
+	assert '👤 CN=jon.snow' in out and 'DN: 👤 ' + dn in out
+	assert 'CN=jon.snow [disabled]' in out and 'DN: 👤 ' + dn + ' [disabled]' in out
 
 
 async def test_ttl(cached):
@@ -131,7 +232,9 @@ async def test_background_queries_bypass_the_cache(cached):
 
 async def test_writes_invalidate_the_cache(cached):
 	conn = CountingConnection([raw_entry()])
+	conn.entries[0]['attributes'].append({'type': b'sAMAccountName', 'attributes': [b'jon.snow']})
 	await search(conn)
+	identity = cached.identities.get('principal', USER_SID)
 
 	async def modify(self, entry, changes, controls=None):
 		return True, None
@@ -142,8 +245,88 @@ async def test_writes_invalidate_the_cache(cached):
 		await conn.modify('CN=x', {})
 	finally:
 		MSLDAPClientConnection.modify = installed
+	assert not cached.queries
+	assert cached.identities.get('principal', USER_SID) == identity
 	await search(conn)
 	assert conn.server_calls == 2
+
+
+async def test_uac_write_uses_live_flags_but_listing_reuses_cache(cached, monkeypatch):
+	from msldap.client import MSLDAPClient
+	dn = 'CN=jon.snow,DC=north'
+	def entry(flags):
+		raw = raw_entry(dn)
+		raw['attributes'].append({'type': b'userAccountControl', 'attributes': [str(flags).encode()]})
+		return raw
+	conn = CountingConnection([entry(0x200)])
+	client = MSLDAPClient(None, None, connection=conn)
+	client._tree = 'DC=north'
+	console = MSLDAPOpsConsole(None, cache=cached)
+	console.connection, console._current_dn = client, dn
+	writes = []
+	async def modify(self, entry, changes, controls=None):
+		writes.append(changes)
+		return True, None
+	monkeypatch.setattr(MSLDAPClientConnection, 'modify', hooks._wrap_write(modify))
+	assert await console._run_single_command('uac', ['.'])
+	assert await console._run_single_command('uac', ['.'])
+	assert conn.server_calls == 1
+	# Another operator sets a delegation flag after our first read.
+	conn.entries = [entry(0x80200)]
+	assert await console._run_single_command('uac', ['.', '+DONT_REQUIRE_PREAUTH'])
+	assert conn.server_calls == 2
+	assert writes == [{'userAccountControl': [('replace', 0x480200)]}]
+	assert not hooks._fresh_reads.get()
+
+
+async def test_grant_preserves_aces_added_since_the_cached_read(cached, monkeypatch):
+	from msldap.client import MSLDAPClient
+	from winacl.dtyp.security_descriptor import SECURITY_DESCRIPTOR
+	from msldap_ops.templates import sd_flags_control
+	dn = 'CN=Target,DC=north'
+	other, grantee = 'S-1-5-21-1-2-3-1200', 'S-1-5-21-1-2-3-1300'
+	def entry(extra=''):
+		raw = raw_entry(dn)
+		for attribute in raw['attributes']:
+			if attribute['type'] == b'nTSecurityDescriptor':
+				attribute['attributes'] = [SECURITY_DESCRIPTOR.from_sddl(
+					'O:SYG:SYD:(A;;GA;;;SY)' + extra).to_bytes()]
+		return raw
+	conn = CountingConnection([entry()])
+	client = MSLDAPClient(None, None, connection=conn)
+	client._tree = 'DC=north'
+	console = MSLDAPOpsConsole(None, cache=cached)
+	console.connection, console._current_dn = client, dn
+	writes = []
+	async def modify(self, entry, changes, controls=None):
+		writes.append(changes)
+		return True, None
+	monkeypatch.setattr(MSLDAPClientConnection, 'modify', hooks._wrap_write(modify))
+	await collect(client.pagedsearch('(objectClass=*)', ['nTSecurityDescriptor'],
+		controls=[sd_flags_control()], tree=dn, search_scope=0))
+	conn.entries = [entry('(A;;WD;;;%s)' % other)]
+	assert await console._run_single_command('grant', [grantee, 'writeowner', '.'])
+	sd = SECURITY_DESCRIPTOR.from_bytes(writes[0]['nTSecurityDescriptor'][0][1])
+	assert {str(ace.Sid) for ace in sd.Dacl.aces} == {'S-1-5-18', other, grantee}
+	assert conn.server_calls == 2
+
+
+async def test_cache_hits_do_not_refresh_identity_observations(cached, monkeypatch):
+	clock = [time.time()]
+	monkeypatch.setattr('msldap_ops.cache.time.time', lambda: clock[0])
+	entry = raw_entry()
+	entry['attributes'].append({'type': b'sAMAccountName', 'attributes': [b'jon.snow']})
+	conn = CountingConnection([entry])
+	await search(conn)
+	observed = cached.identities.get('principal', USER_SID)['observed']
+	clock[0] += 30
+	await search(conn)
+	assert conn.server_calls == 1
+	assert cached.identities.get('principal', USER_SID)['observed'] == observed
+	clock[0] += 31
+	await search(conn)
+	assert conn.server_calls == 2
+	assert cached.identities.get('principal', USER_SID)['observed'] == clock[0]
 
 
 async def test_cache_is_per_account_and_persisted(cached, tmp_path):
@@ -282,7 +465,12 @@ async def test_templates_after_bofhound_collect_come_from_the_cache(cached):
 
 	config = 'CN=Configuration,DC=x'
 	pki = templates.pki_base(config)
-	conn = CountingConnection([raw_entry('CN=ESC1,CN=Certificate Templates,' + pki), raw_entry('CN=CA,CN=Enrollment Services,' + pki)])
+	policy = raw_entry('CN=Policy,CN=OID,' + pki)
+	policy['attributes'].extend([
+		{'type': b'msPKI-Cert-Template-OID', 'attributes': [b'1.2.3.4.5']},
+		{'type': b'msDS-OIDToGroupLink', 'attributes': [b'CN=Linked Group,CN=Users,DC=x']},
+	])
+	conn = CountingConnection([raw_entry('CN=ESC1,CN=Certificate Templates,' + pki), raw_entry('CN=CA,CN=Enrollment Services,' + pki), policy])
 	client = MSLDAPClient(None, None, connection=conn)
 	client._tree = 'DC=x'
 	client._serverinfo = {'defaultNamingContext': 'DC=x', 'configurationNamingContext': config}
@@ -294,6 +482,9 @@ async def test_templates_after_bofhound_collect_come_from_the_cache(cached):
 
 	await collect(client.pagedsearch('(objectClass=pKIEnrollmentService)', templates.CA_ATTRIBUTES, tree='CN=Enrollment Services,' + pki))
 	await collect(client.pagedsearch('(objectClass=pKICertificateTemplate)', templates.TEMPLATE_ATTRIBUTES, controls=[templates.sd_flags_control()], tree='CN=Certificate Templates,' + pki))
+	policies = await templates._search(client, '(objectClass=msPKI-Enterprise-Oid)', templates.POLICY_ATTRIBUTES, 'CN=OID,' + pki)
+	assert len(policies) == 1
+	assert policies[0]['attributes']['msDS-OIDToGroupLink'] == 'CN=Linked Group,CN=Users,DC=x'
 	assert conn.server_calls == calls
 
 

@@ -10,6 +10,56 @@ from winacl.dtyp.security_descriptor import SECURITY_DESCRIPTOR
 
 MAX_NAME_WIDTH = 32
 
+# Most specific classes first: computers and managed service accounts also inherit user.
+TYPE_ICONS = (
+	('msds-groupmanagedserviceaccount', '⚙️'), ('msds-managedserviceaccount', '⚙️'),
+	('computer', '🖥️'), ('group', '👥'), ('user', '👤'), ('contact', '👤'),
+	('organizationalunit', '🗂️'), ('grouppolicycontainer', '📜'),
+	('trusteddomain', '🔗'), ('foreignsecurityprincipal', '🔗'),
+	('pkienrollmentservice', '🏛️'), ('pkicertificatetemplate', '📜'),
+	('certificationauthority', '🔐'), ('dnszone', '🌐'), ('dnsnode', '📍'),
+	('domaindns', '🌐'), ('domain', '🌐'), ('builtindomain', '📁'), ('container', '📁'),
+)
+
+
+def object_icon(classes):
+	"""Icon for the most specific known objectClass, or a neutral object icon."""
+	classes = [classes] if isinstance(classes, str) else classes or []
+	known = {name.lower() for name in classes}
+	return next((icon for name, icon in TYPE_ICONS if name in known), '📄')
+
+
+def object_classes(attributes):
+	return next((value for name, value in attributes.items() if name.lower() == 'objectclass'), [])
+
+
+def object_metadata(attributes):
+	return {name.lower(): value for name, value in attributes.items()
+		if name.lower() in ('objectclass', 'useraccountcontrol') and value is not None}
+
+
+def account_disabled(attributes):
+	"""True/False for a known ACCOUNTDISABLE flag; None when the status is unknown."""
+	value = next((value for name, value in attributes.items() if name.lower() == 'useraccountcontrol'), None)
+	if isinstance(value, list):
+		value = value[0] if value else None
+	try:
+		return bool(int(value) & 0x2)
+	except (TypeError, ValueError):
+		return None
+
+
+def object_label(name, metadata=None, root=False):
+	"""Shared Rich label for ls/map/tree; absent metadata adds no decoration."""
+	from rich.text import Text
+	metadata = metadata or {}
+	classes = object_classes(metadata)
+	disabled = account_disabled(metadata) is True
+	label = '%s %s' % (object_icon(classes), name) if classes else name
+	if disabled:
+		label += ' [disabled]'
+	return Text(label, style='bright_black' if disabled else ('bold' if root else ''))
+
 
 def value_str(name, value):
 	if isinstance(value, SECURITY_DESCRIPTOR):
@@ -29,8 +79,9 @@ def cached_note(stored):
 	return '  (from cache: %s)' % stored.strftime('%Y-%m-%d %H:%M') if stored is not None else ''
 
 
-def record_lines(dn, attributes, cached_at=None):
-	lines = ['---', 'DN: %s%s' % (dn, cached_note(cached_at))]
+def record_lines(dn, attributes, cached_at=None, icon=None, disabled=False):
+	lines = ['---', 'DN: %s%s%s%s' % (icon + ' ' if icon else '', dn,
+		' [disabled]' if disabled else '', cached_note(cached_at))]
 	if not attributes:
 		lines.append('  (no attributes returned)')
 		return lines

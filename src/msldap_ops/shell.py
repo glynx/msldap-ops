@@ -9,6 +9,7 @@ import signal
 import sys
 
 from msldap.examples.msldapclient import MSLDAPClientConsole
+from msldap.commons.factory import LDAPConnectionFactory
 from msldap.external.aiocmd.aiocmd.aiocmd import ExitPromptException
 from msldap.protocol.constants import BASE, LEVEL, SUBTREE
 from msldap.wintypes.asn1.sdflagsrequest import SDFlagsRequest, SDFlagsRequestValue
@@ -18,7 +19,7 @@ from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.patch_stdout import patch_stdout
 
 from msldap_ops import __version__
-from msldap_ops import aces, acl, changes as changelog, delegations, hooks, laps, navigation, opsec, presets, privileged, records, templates, ui
+from msldap_ops import aces, acl, changes as changelog, connections, delegations, hooks, laps, navigation, opsec, presets, privileged, records, templates, ui
 from msldap_ops import history as command_history
 from msldap_ops import transcript
 
@@ -60,16 +61,84 @@ class SearchWatch:
 		if not query.background:
 			self.cached_at = query.cached_at if query.cached else None
 
-# help categories: msldap-ops commands and the most used msldap built-ins, grouped. Commands not
-# listed here (the long tail of msldap built-ins) are shown under "Other" at the end. '*' marks a
-# command that changes the directory.
+# Commands are grouped by purpose; only explicitly superseded commands are legacy.
+LEGACY_REPLACEMENTS = {
+	'unconstrained': 'delegations unconstrained',
+	'constrained': 'delegations constrained',
+	'dadms': 'find_admins',
+	'lapstarget': 'laps',
+	'certtemplates': 'templates',
+	'enrollmentservices': 'cas',
+	'changeowner': 'chown',
+	'addprivdcsync': 'grant <principal> dcsync <path>',
+	'addprivaddmember': 'grant <principal> writemembers <path>',
+	'add_genericwrite': 'grant <principal> genericwrite <path>',
+	'addallowedtoactonbehalfofotheridentity': 'rbcd <path> add <principal>',
+	'modify': 'setattr',
+	'shadowcred': 'keycred <path> add',
+}
+
+# Compact summaries for help; detailed help still uses the full command docstrings.
+HELP_SUMMARIES = {
+	'cas': 'List CAs and permissions on their AD objects.',
+	'help': 'Show commands or detailed help.',
+	'bindtree': 'Set the base DN for subsequent queries.',
+	'dump': 'Dump all user and computer accounts.',
+	'machine': 'Look up a computer by account name.',
+	'pre2000': 'List potentially abusable pre-Windows 2000 computers.',
+	'schemaentry': 'Look up a schema object by its CN.',
+	'adinfo': 'Show Active Directory information.',
+	'ldapinfo': 'Show LDAP server information.',
+	'bofhound_collect': 'Collect directory data for bofhound.',
+	'find_admins': 'List privileged accounts.',
+	'find': 'Find objects by account name or name.',
+	'ls': 'List children of a DN or path.',
+	'cat': 'Show object attributes.',
+	'uac': 'Show or change account control flags.',
+	's4u2proxy': 'List accounts trusted for protocol transition.',
+
+	'acl': 'Show owner and decoded access rights.',
+	'addattr': 'Add an attribute value (undoable).',
+	'delattr': 'Remove an attribute value (undoable).',
+	'addenrollmentright': 'Grant certificate enrollment rights.',
+	'addcerttemplatenameflagaltname': 'Set certificate template subject alternative name flags.',
+	'addusertogroup': 'Add a user to a group.',
+	'deluserfromgroup': 'Remove a user from a group.',
+	'changeuserpw': 'Change a user password.',
+	'deluser': 'Delete a user.',
+	'enableuser': 'Enable a user account.',
+	'disableuser': 'Disable a user account.',
+	'getsd': 'Show the raw security descriptor (SDDL).',
+	'groupmembers': 'List group members (supports paths).',
+	'groupmembership': 'List the groups an account belongs to.',
+	'gmsa': 'List managed service accounts and readable passwords.',
+	'grant': 'Grant access rights to a principal.',
+	'revoke': 'Remove matching access rights for a principal.',
+	'chown': 'Change the owner of an object.',
+	'keycred': 'List, add, remove or clear key credentials.',
+	'laps': 'Read local administrator passwords (both LAPS versions).',
+	'laps_permissions': 'Show LAPS read permissions from the object ACL.',
+	'map': 'Show the known directory tree from the cache.',
+	'tree': 'Query the directory tree.',
+	'rbcd': 'Show or change resource-based constrained delegation.',
+	'transcript': 'Record commands and output to a file.',
+	'changes': 'List directory changes and undo status.',
+	'dnsdump': 'Dump DNS records.',
+	'dnsdelete': 'Permanently delete a DNS record.',
+	'dnsremove': 'Tombstone a DNS record.',
+	'enrollmentservices': 'List certificate enrollment services.',
+	'create_broken_dmsa_user': 'Create a dMSA service user for testing.',
+	'shadowcred': 'Add a key credential and export its certificate.',
+}
+
 HELP_CATEGORIES = [
-	('Session', ['login', 'opsec', 'log', 'transcript', 'cache', 'changes', 'undo', 'whoami', 'help', 'exit']),
+	('Session', ['opsec', 'log', 'transcript', 'cache', 'changes', 'undo', 'whoami', 'whoamiraw', 'help']),
+	('Connection', ['login', 'ldapinfo', 'adinfo', 'bindtree', 'nocb', 'nosig', 'nullcb', 'exit', 'quit']),
 	('Navigation', ['cd', 'ls', 'cat', 'tree', 'map', 'find', 'query']),
-	('Enumeration', ['bofhound_collect', 'find_admins', 'delegations', 'acl', 'getsd', 'laps',
-		'groupmembership', 'trusts', 'spns', 'asrep', 'pre2000', 'gmsa']),
+	('Enumeration', ['bofhound_collect', 'find_admins', 'delegations', 'acl', 'getsd', 'laps', 'laps_permissions',
+		'groupmembers', 'groupmembership', 'trusts', 'spns', 'asrep', 'pre2000', 'gmsa', 's4u2proxy', 'dmsas', 'gpos', 'badsuccessor_check']),
 	('Lookup', ['sam2dn', 'sid2dn', 'dn2sid', 'dn2sam', 'sidresolv', 'user', 'machine']),
-	('ADCS', ['templates', 'certtemplates', 'enrollmentservices', 'rootcas', 'ntcas', 'aiacas',
+	('ADCS', ['cas', 'templates', 'certtemplates', 'enrollmentservices', 'rootcas', 'ntcas', 'aiacas',
 		'certify', 'certify2', 'addenrollmentright', 'addcerttemplatenameflagaltname']),
 	('DNS', ['dnsquery', 'dnsqueryall', 'dnsdump', 'dnszones', 'dnssoa', 'dnsgetserial',
 		'dnsadd', 'dnsremove', 'dnsdelete', 'dnsmodify', 'dnsrestore']),
@@ -78,7 +147,7 @@ HELP_CATEGORIES = [
 		'addcomputer', 'changeuserpw', 'enableuser', 'disableuser', 'unlockuser', 'addspn', 'delspn',
 		'addhostname', 'changesamaccountname', 'setsd', 'changeowner', 'addprivdcsync',
 		'addprivaddmember', 'add_genericwrite', 'addallowedtoactonbehalfofotheridentity', 'shadowcred',
-		'modify', 'delete', 'rm']),
+		'modify', 'delete', 'rm', 'create_broken_dmsa_user', 'dmsasetdelegatedmsastate']),
 ]
 # commands that change the directory, marked with '*' in help (across all categories)
 WRITING_COMMANDS = set(HELP_CATEGORIES[-1][1]) | {
@@ -155,6 +224,7 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		m = re.match(r'^\[(.*)\]> $', value or '')
 		self._prompt_dn = m.group(1) if m else (value or '').strip().rstrip('>').strip()
 
+	@ui.help_output()
 	def do_help(self, command=None):
 		"""Lists the commands grouped by category, or shows one command in detail.
 
@@ -165,23 +235,28 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			return MSLDAPClientConsole.do_help(self, command)
 		commands = set(self.command_list)
 		listed = set()
+		legacy = commands.intersection(LEGACY_REPLACEMENTS)
 
 		def usage(name):
 			text = self._get_command_usage(name, *self._get_command_args(name))
 			return text + ' *' if name in WRITING_COMMANDS else text
 
 		def first_line(name):
-			return (inspect.getdoc(self._get_command(name)) or '').split('\n')[0]
+			if name in legacy:
+				return 'Use %s.' % LEGACY_REPLACEMENTS[name]
+			return HELP_SUMMARIES.get(name, (inspect.getdoc(self._get_command(name)) or '').split('\n')[0])
 
 		groups = []
 		for title, names in HELP_CATEGORIES:
-			present = [n for n in names if n in commands]
+			present = [n for n in names if n in commands and n not in legacy]
 			listed.update(present)
 			if present:
 				groups.append((title, present))
-		other = sorted(commands - listed - {'?'})
+		other = sorted(commands - listed - legacy - {'?'})
 		if other:
-			groups.append(('Other msldap commands', other))
+			groups.append(('Other commands', other))
+		if legacy:
+			groups.append(('Legacy msldap commands', sorted(legacy)))
 
 		print()
 		print('msldap-ops %s - commands' % __version__)
@@ -213,6 +288,7 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		inner = sys.stdout if isinstance(sys.stdout, ui.StyledStream) else None
 		if inner is not None:
 			inner.tee = False
+			inner.style_output = False
 		try:
 			with patch_stdout(raw=True):
 				proxy = sys.stdout
@@ -224,6 +300,7 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		finally:
 			if inner is not None:
 				inner.tee = True
+				inner.style_output = True
 			if self._ignore_sigint and sys.platform != 'win32':
 				asyncio.get_event_loop().remove_signal_handler(signal.SIGINT)
 			self._on_close()
@@ -262,14 +339,19 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			return EXIT
 		return None
 
-	def __init__(self, url=None, querylog=None, gate=None, keepalive=300, cache=None, history_file=None, changes_log=None):
+	def __init__(self, url=None, querylog=None, gate=None, keepalive=300, cache=None, history_file=None,
+			changes_log=None, ntlm_bind=None, no_signing=False, no_channel_binding=False):
 		MSLDAPClientConsole.__init__(self, url)
+		self.ntlm_bind = ntlm_bind
+		self._disable_signing = no_signing
+		self._disable_channel_binding = no_channel_binding
 		self.history_file = history_file
 		self.changes_log = changes_log
 		self.querylog = querylog
 		self.cache = cache
 		self.gate = gate if gate is not None else opsec.OpsecGate()
 		self.keepalive = keepalive
+		self._directory_metadata = {}
 
 	async def _run_single_command(self, command, args):
 		if transcript.active() is not None:
@@ -303,7 +385,11 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		hooks.set_foreground(asyncio.current_task())
 		self.gate.start_command(command)
 		try:
-			return await MSLDAPClientConsole._run_single_command(self, command, args)
+			writing = command in WRITING_COMMANDS
+			if command in ('uac', 'rbcd', 'keycred'):
+				writing = len(args) > 1  # listing these objects remains cacheable
+			with hooks.fresh_reads(writing):
+				return await MSLDAPClientConsole._run_single_command(self, command, args)
 		finally:
 			self.gate.end_command()
 			hooks.set_foreground(None)
@@ -315,6 +401,17 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 
 	async def do_login(self, url=None):
 		"""Performs connection and login"""
+		self._directory_metadata = {}
+		if self.ntlm_bind is not None:
+			try:
+				factory = self.conn_url if url is None else (
+					url if isinstance(url, LDAPConnectionFactory) else LDAPConnectionFactory.from_url(url))
+				if factory is not None:
+					self.conn_url = connections.ntlm_bind_factory(factory, self.ntlm_bind)
+					url = None  # msldap consumes prebuilt factories from conn_url, not its url argument.
+			except ValueError as e:
+				print('Connection options: %s' % e)
+				return False
 		res = await MSLDAPClientConsole.do_login(self, url)
 		if res is False:
 			# msldap keeps the unconnected client, the other commands would fail on it
@@ -333,24 +430,43 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			task.cancel()
 
 	async def do_cache(self, action=None, value=None):
-		"""Shows or controls the query cache.
+		"""Control the query cache and retained identities.
 
 		cache                  state, size, hits/misses and the cache file
 		cache list             cached queries with age and number of results
+		cache identities       retained names, SIDs, sources and last observation (all domains)
+		cache identities clear explicitly clears the shared identity catalogue
 		cache flush [text]     drops all cached queries and the DN index, or only the queries
 		                       whose base DN or filter contains text
-		cache ttl <seconds>    how long results are reused (default 1800)
+		cache ttl <seconds>    how long results are reused (default 7200 = 2 hours)
 		cache on | off         answer repeated searches from the cache or always ask the server
 
 		Repeated searches within the TTL are answered from the cache without contacting the
 		server; opsec show marks them with [cache]. Background queries (keepalive), searches
 		stopped early and failed ones are not cached; add/modify/delete drop the cached queries.
 		The cache is kept per server and account in ./msldap-ops-cache/.
+		Identity labels are shared within this directory and survive TTL, writes and flush.
+		Old labels show their last observation; they are not evidence of current access.
 		"""
 		if self.cache is None:
 			print('The cache is not available (started with --no-cache)')
 			return True
 		action = (action or '').lower()
+		if action == 'identities':
+			if value == 'clear':
+				print('Cleared %d retained identity records' % self.cache.identities.clear())
+				return True
+			if value is not None:
+				print('Usage: cache identities [clear]')
+				return False
+			from msldap_ops.identities import last_seen
+			rows = [['Type', 'SID / domain DN', 'Name', 'Last seen', 'Server', 'Collected as']]
+			for record in self.cache.identities.rows():
+				data = record['data']
+				rows.append([record['kind'], record['key'], data.get('name') or data.get('flat') or data.get('dns', ''),
+					last_seen(record['observed']), record['server'] or '-', record['account'] or '-'])
+			ui.emit(privileged.table(rows, 2))
+			return True
 		if action == 'flush':
 			dropped = self.cache.flush(value)
 			print('Dropped %d cached %s%s' % (dropped, 'query' if dropped == 1 else 'queries', '' if value else ' and the DN index'))
@@ -378,13 +494,14 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		if stats['oldest']:
 			print('  oldest entry from %s' % stats['oldest'])
 		print('  file: %s' % (self.cache.path or '(not bound yet, log in first)' if self.cache.persist else 'not persisted'))
+		print('  identity catalogue: %s' % (self.cache.identities.path or 'not persisted'))
 		return True
 
 	def _cache_completions(self):
-		return WordCompleter(['list', 'flush', 'ttl', 'on', 'off'])
+		return WordCompleter(['list', 'flush', 'ttl', 'on', 'off', 'identities', 'clear'])
 
 	async def do_opsec(self, mode=None):
-		"""Shows or sets the opsec mode for LDAP searches.
+		"""Show or set the opsec mode for LDAP operations.
 
 		off      queries are sent without notice (default)
 		show     every query is printed before it is sent
@@ -392,6 +509,7 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		         y = send, n = skip (the command gets an empty result),
 		         a = send all further queries of this command, q = abort the command;
 		         the queries of cd, ls and cat are only shown
+		confirm-write  reads run silently; every add, modify or delete is shown and confirmed
 		dryrun   queries are printed but not sent; commands that build queries on the
 		         results of earlier ones (e.g. find_admins) only show their first stage
 
@@ -483,8 +601,25 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		       Without names the presets and their queries are listed.
 		delay: seconds between queries (default 0), or a MIN-MAX range for random jitter (e.g. 2-8).
 
-		'all' runs every preset except 'dns', which can be large. Results are not printed,
-		they go to the query log (see 'log'). All queries request *,nTSecurityDescriptor
+		Presets:
+		  domain      Domain object (required by bofhound)
+		  users       User accounts
+		  computers   Computer accounts, gMSAs and trust accounts
+		  groups      Security and distribution groups
+		  ous         Organizational units
+		  containers  Containers
+		  gpos        Group policy objects
+		  trusts      Domain trusts
+		  fsps        Foreign security principals
+		  schema      Schema GUIDs for ACL decoding
+		  adcs        CAs, NTAuth store, templates and issuance policies
+		  partitions  NetBIOS domain names
+		  dns         DNS nodes and computer IP addresses
+
+		'all' runs every preset, including DNS. DNS zones can be large; select individual presets
+		for a narrower collection. Results are not printed,
+		they go to the query log (see 'log'). The ADCS issuance-policy query also requests
+		msDS-OIDToGroupLink for template checks. ACL collection requests *,nTSecurityDescriptor
 		with the SD flags control, so unprivileged users get the DACLs as well.
 		"""
 		if names is None:
@@ -576,18 +711,22 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		"""Certificate templates in a certipy-like layout.
 
 		templates             table of all templates: CAs, client authentication, enrollee
-		                      supplies subject, manager approval, vulnerabilities
+		                      supplies subject, manager approval and vulnerabilities
 		templates <name>      details of one template (name or display name)
 		templates vulnerable  details of all published templates with vulnerabilities
 		templates enabled     details of all published templates
 
 		Details show the decoded flags one per line (security relevant bits marked with [!]),
 		EKUs, validity, key size and the principals of the permissions. Vulnerabilities (ESC1-4,
-		ESC9) are checked for the token of the bound user; accounts bound through a trust are
+		ESC9, ESC13) are checked for the token of the bound user; accounts bound through a trust are
 		checked as low privileged users.
+		Yellow review points show enrollment-agent targets and control rights of other principals;
+		they do not establish an exploitable chain or effective access.
+		In the overview, ESCn [?] marks a review point in the vulnerabilities column.
 
 		LDAP queries: the bound user and its tokenGroups, the enrollment services, the templates
-		(with the SD flags control); details additionally resolve the SIDs of the permissions
+		(with the SD flags control), plus issuance policies when templates reference them;
+		details additionally resolve the SIDs of the permissions
 		that are not cached yet.
 		"""
 		if self.connection is None:
@@ -601,6 +740,7 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		if mode == '':
 			ui.emit(templates.summary_lines(report))
 			print('Vulnerabilities checked for %s. Details: templates <name>' % report.principal)
+			print('[?] = review point; none = no finding for the evaluated token. Details: templates enabled.')
 			return True
 
 		selected = report.templates
@@ -612,9 +752,42 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			print('No templates found' if name else 'No matching templates')
 			return name is None
 		for info in selected:
-			principals = await templates.resolve_principals(self.connection, info)
+			principals = await templates.resolve_principals(self.connection, info, self.cache)
 			ui.emit(templates.detail_lines(info, principals, report.principal))
 			print()
+		return True
+
+	async def do_cas(self, name=None):
+		"""List CAs and permissions on their AD objects.
+
+		cas              all enterprise CAs registered in AD, with owner and decoded DACLs
+		cas <name|host>   only CAs matching an exact name or DNS host name
+
+		LDAP only: shows the enrollment-service object's permissions, with ACL review points.
+		These are not the CA service's ManageCA/ManageCertificates permissions (ESC7).
+		ESC6 policy, ESC7 service permissions and ESC11 RPC settings need direct CA RPC/registry
+		access. ESC8 Web Enrollment needs a check of the actual HTTP(S) endpoint, including NTLM
+		and EPA settings. No CA endpoint is contacted by this command.
+
+		One LDAP search with the SD flags control, plus SID lookups not already cached.
+		Reuses the results of bofhound_collect adcs; a missing descriptor is not a clean result.
+		"""
+		from msldap_ops import cas
+		if self.connection is None:
+			print('Not connected, run login first')
+			return False
+		try:
+			entries = await cas.collect(self.connection, name)
+		except Exception as e:
+			print(records.search_error(e, self.connection._get_configuration_nc()))
+			return False
+		if not entries:
+			print('No matching CAs' if name else 'No enterprise CAs returned by LDAP')
+			return name is None
+		for index, entry in enumerate(entries):
+			if index:
+				print()
+			ui.emit(await cas.detail_lines(self.connection, entry, self.cache, ui.output_width()))
 		return True
 
 	def _templates_completions(self):
@@ -639,6 +812,31 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			return []
 		return [value[0] for value in self.cache.dns.values()]
 
+	def _known_metadata(self):
+		metadata = {dn: dict(attrs) for dn, attrs in self._directory_metadata.items()}
+		info = getattr(self.connection, '_ldapinfo', None)
+		dn, root_classes = getattr(info, 'distinguishedName', None), getattr(info, 'objectClass', None)
+		if dn and root_classes:
+			metadata.setdefault(dn.lower(), {}).setdefault('objectclass', root_classes)
+		if self.cache is not None:
+			for dn, attrs in self.cache.object_metadata().items():
+				metadata.setdefault(dn, {}).update(attrs)
+		return metadata
+
+	async def _directory_children(self, target):
+		"""One listing query including types and account status; ls of the current DN reuses it."""
+		children, metadata = {}, {}
+		async for entry, err in self.connection.pagedsearch('(distinguishedName=*)',
+				['distinguishedName', 'objectClass', 'userAccountControl'], tree=target, search_scope=LEVEL):
+			if err is not None:
+				raise err
+			dn = entry['objectName']
+			name = navigation.relative_name(dn, target)
+			if name:
+				children[name] = dn
+				metadata[dn.lower()] = records.object_metadata(entry['attributes'])
+		return children, metadata
+
 	async def do_cd(self, path):
 		"""Changes the current DN.
 
@@ -648,15 +846,28 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		cd <DN>                absolute, e.g. CN=Configuration,DC=... (any naming context of the DC)
 
 		Escaped commas in DNs (CN=Doe\\, John) are handled. Completion offers the children of the
-		current DN, every DN below it seen so far (query cache) and the naming contexts.
-		Lists the children of the new DN with one LDAP search (cached).
+		current DN and the naming contexts. Deeper cached paths appear after an unescaped comma.
+		Loads the children and their object classes with one LDAP search (cached).
 		"""
 		if self.connection is None:
-			return await MSLDAPClientConsole.do_cd(self, path)
+			print('Not connected, run login first')
+			return False
 		target = self._resolve_path(path)
 		if target is None:
 			return False
-		return await MSLDAPClientConsole.do_cd(self, target)
+		root_metadata = self._known_metadata().get(target.lower())
+		try:
+			children, metadata = await self._directory_children(target)
+		except Exception as e:
+			print(records.search_error(e, target))
+			return False
+		self._MSLDAPClientConsole__current_dirs = children
+		if root_metadata:
+			metadata[target.lower()] = root_metadata
+		self._directory_metadata = metadata
+		self._current_dn = target
+		self.prompt = '[%s]> ' % target
+		return True
 
 	async def do_ls(self, path='', full=''):
 		"""Children of the current DN or of a path, like ls in a shell.
@@ -672,7 +883,9 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			path, full = '', path  # msldap: ls <fullpath>
 		split = navigation.split_pattern(path) if path else None
 		parent, pattern = split if split else (path or '.', None)
+		metadata = self._known_metadata()
 		if parent == '.':
+			target = self._current_dn
 			children = self._MSLDAPClientConsole__current_dirs or {}
 		else:
 			if self.connection is None:
@@ -680,21 +893,25 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 				return False
 			try:
 				target = navigation.resolve(parent, self._current_dn, self._naming_contexts())
-				tree = await self.connection.get_tree_plot(target, level=1)
+				children, found_metadata = await self._directory_children(target)
+				for dn, attrs in found_metadata.items():
+					metadata.setdefault(dn, {}).update(attrs)
 			except ValueError as e:
 				print(e)
 				return False
 			except Exception as e:
 				print(records.search_error(e, target))
 				return False
-			children = {navigation.join_dn(navigation.split_dn(dn)[:-len(navigation.split_dn(target))]): dn
-				for dn in tree.get(target, {})}
-		shown = 0
+		shown = []
 		for name, dn in children.items():
 			if pattern is None or navigation.rdn_matches(name, pattern):
-				print(dn if full else name)
-				shown += 1
-		if pattern is not None and shown == 0:
+				shown.append((name, dn))
+		if ui.output_width() is not None and shown:
+			ui.emit_tree(navigation.directory_tree([dn for name, dn in shown], target,
+				depth=1, metadata=metadata, full_names=bool(full)))
+		else:
+			ui.emit([dn if full else name for name, dn in shown])
+		if pattern is not None and not shown:
 			print('No match for %s' % pattern)
 		return True
 
@@ -717,7 +934,34 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		answered from the query cache, and everything found also shows up in 'map'.
 		To see what is already known without asking the DC, use 'map'.
 		"""
-		return await MSLDAPClientConsole.do_tree(self, dn, level)
+		if self.connection is None:
+			print('Not connected, run login first')
+			return False
+		try:
+			# Preserve msldap's shorthand: tree 2 means two levels below the domain root.
+			if dn is not None and dn.lstrip('+-').isdigit():
+				level, dn = dn, None
+			level = int(level) if level is not None else 1
+			if level < 0:
+				raise ValueError('Level must be zero or greater')
+			root = navigation.resolve(dn, self._current_dn, self._naming_contexts()) if dn else self.connection._tree
+		except ValueError as e:
+			print(e)
+			return False
+		try:
+			data = await self.connection.get_tree_plot(root, level)
+		except Exception as e:
+			print(records.search_error(e, root))
+			return False
+		# msldap nests dictionaries of full DNs (and repeats parents at deeper levels).
+		pending, dns = [data], []
+		while pending:
+			branch = pending.pop()
+			dns.extend(branch)
+			pending.extend(branch.values())
+		metadata = self._known_metadata() if ui.output_width() is not None else None
+		ui.emit_tree(navigation.directory_tree(dns, root, metadata=metadata))
+		return True
 
 	async def do_map(self, dn=None, depth='3'):
 		"""Tree of the DNs seen so far below a DN, without asking the DC (default: current DN).
@@ -737,6 +981,8 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			return False
 		try:
 			depth = int(depth)
+			if depth < 0:
+				raise ValueError
 		except ValueError:
 			print("Invalid depth '%s'" % depth)
 			return False
@@ -745,9 +991,10 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		except ValueError as e:
 			print(e)
 			return False
-		lines = navigation.tree_lines(self._known_dns(), root, depth or None)
-		ui.emit(lines)
-		if len(lines) == 1:
+		metadata = self._known_metadata() if ui.output_width() is not None else None
+		tree = navigation.directory_tree(self._known_dns(), root, depth or None, metadata=metadata)
+		ui.emit_tree(tree)
+		if not tree.children:
 			print("(nothing seen below this DN yet; 'tree' asks the DC)")
 		else:
 			print("(known from the cache, may be incomplete; 'tree' asks the DC)")
@@ -761,11 +1008,22 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		"""Raw LDAP search.
 
 		query <filter> [attributes] [base] [scope]
+		  filter      LDAP filter, e.g. (objectClass=*) or (sAMAccountName=admin*);
+		              a bare '*' is not a filter
 		  attributes  comma separated, default *; nTSecurityDescriptor is requested with the
 		              SD flags control, so unprivileged users get owner, group and DACL
 		  base        DN or path relative to the current DN (as for cd), default: domain root;
-		              '-' for the default
-		  scope       base | one | sub (default)
+		              '.' for the current DN, '-' for the default
+		  scope       base: the base object; one: direct children; sub: entire subtree (default)
+
+		Arguments are positional: to set scope, supply attributes and base as well.
+		Examples:
+		  query (objectClass=*) * - base                 domain object only
+		  query (objectClass=*) * . base                 current object only (like cat .)
+		  query (objectClass=*) name,objectClass . one    direct children of the current DN
+		  query (sAMAccountName=admin*) sAMAccountName    matching accounts in the domain
+		  query (objectCategory=group) cn,member CN=Users sub
+		  query (adminCount=1) *,nTSecurityDescriptor
 
 		Every object starts with a separator line and its DN, multi-valued attributes are listed
 		below each other; the number of objects is shown at the end.
@@ -811,11 +1069,30 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			print(e)
 			return False
 		if glob:
-			return await self._print_objects(glob[1], attrs, target, LEVEL)
-		return await self._print_objects('(objectClass=*)', attrs, target, BASE, count=False)
+			return await self._print_objects(glob[1], attrs, target, LEVEL, icons=True)
+		return await self._print_objects('(objectClass=*)', attrs, target, BASE, count=False, icons=True)
 
 	def _cat_completions(self):
 		return self._cd_completions()
+
+	async def do_trusts(self):
+		"""List domain trusts with direction, type, attributes and SID.
+
+		Directions are relative to the connected domain. Lists the configured trust attributes;
+		no authentication or effective SID-filtering tests are performed. One LDAP search.
+		"""
+		from msldap_ops.trusts import format_trusts
+		if self.connection is None:
+			print('Not connected, run login first')
+			return False
+		entries = []
+		async for entry, err in self.connection.get_all_trusts():
+			if err is not None:
+				print(records.search_error(err, self.connection._tree))
+				return False
+			entries.append(entry)
+		ui.emit(format_trusts(entries, self.connection._tree))
+		return True
 
 	async def do_delegations(self, kind='all'):
 		"""Lists accounts configured for Kerberos delegation.
@@ -836,7 +1113,9 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			return False
 		base = self.connection._tree
 		total = 0
-		for k in kinds:
+		for index, k in enumerate(kinds):
+			if index:
+				print()
 			query, attributes = delegations.QUERIES[k]
 			rows = []
 			async for entry, err in self.connection.pagedsearch(query, attributes, tree=base):
@@ -847,7 +1126,7 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			total += len(rows)
 			if k == 'rbcd':
 				sids = sorted({s for r in rows for s in r['allowed']})
-				names = await acl.resolve(self.connection, sids) if sids else {}
+				names = await acl.resolve(self.connection, sids, self.cache) if sids else {}
 				ui.emit(delegations.format_rbcd(rows, names))
 			else:
 				ui.emit(delegations.FORMAT[k](rows))
@@ -857,6 +1136,28 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 
 	def _delegations_completions(self):
 		return WordCompleter(list(delegations.KINDS) + ['all'])
+
+	async def do_sid2dn(self, sid):
+		"""Look up an object's DN by SID.
+
+		Requests distinguishedName, objectSid and sAMAccountName in one search so account
+		identities are also retained in the project's identity catalogue. Objects without
+		sAMAccountName still return their DN but do not supply an account-name label.
+		"""
+		if self.connection is None:
+			print('Not connected, run login first')
+			return False
+		query = '(objectSid=%s)' % privileged.escape_filter_value(sid)
+		dn = None
+		async for entry, err in self.connection.pagedsearch(query, ['distinguishedName', 'objectSid', 'sAMAccountName']):
+			if err is not None:
+				raise err
+			dn = entry['attributes'].get('distinguishedName') or entry['objectName']
+		if dn is None:
+			print('Object with SID %s not found' % sid)
+			return False
+		print(dn)
+		return True
 
 	async def do_find(self, pattern, path=''):
 		"""Finds objects by account name or name and prints their DNs.
@@ -920,17 +1221,7 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		if self.connection is None:
 			print('Not connected, run login first')
 			return False
-		scope = SUBTREE
-		if target in ('', '.'):
-			# the object we are standing on, one base search
-			base, query, scope = self._current_dn, laps.COMPUTER_FILTER, BASE
-		elif target == 'all':
-			base, query = self.connection._tree, laps.COMPUTER_FILTER
-		else:
-			value = navigation.escape_glob(target if target.endswith('$') or '*' in target else target + '$')
-			name = navigation.escape_glob(target)
-			base = self.connection._tree
-			query = '(&%s(|(sAMAccountName=%s)(name=%s)))' % (laps.COMPUTER_FILTER, value, name)
+		base, query, scope = laps.search_target(target, self._current_dn, self.connection._tree)
 		entries = []
 		async for entry, err in self.connection.pagedsearch(query, laps.ATTRIBUTES, tree=base, search_scope=scope):
 			if err is not None:
@@ -954,6 +1245,58 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 
 	def _laps_completions(self):
 		return WordCompleter(['.', 'all'])
+
+	async def do_laps_permissions(self, target='.'):
+		"""Show LAPS read permissions from the object ACL.
+
+		laps_permissions                     current object, when it is a computer
+		laps_permissions <computer|pattern>  by account name or name; '*' as wildcard
+		laps_permissions all                 every computer in the domain
+
+		Shows read-related allow/deny ACEs for legacy and Windows LAPS, including property sets
+		and inherited entries. Confidential attributes require ReadProperty AND ControlAccess.
+		This is an ACL review, not an effective-access check or proof that LAPS is configured.
+		Reading encrypted values and permission to decrypt them are separate.
+		Without the corresponding schema extension, LAPS cannot store passwords in this forest's
+		AD. An empty schema search can also mean limited visibility; it is reported once.
+
+		LDAP only: one computer search with the SD flags control, one targeted schema search,
+		plus uncached SID lookups. No password attributes are requested.
+		"""
+		from msldap_ops import laps_permissions
+		if self.connection is None:
+			print('Not connected, run login first')
+			return False
+		base, _, _ = laps.search_target(target, self._current_dn, self.connection._tree)
+		try:
+			entries = await laps_permissions.collect_computers(self.connection, target, self._current_dn)
+		except Exception as err:
+			print(records.search_error(err, base))
+			return False
+		if not entries:
+			print('No computers matched %r' % target)
+			return True
+		try:
+			attributes = await laps_permissions.schema(self.connection)
+		except Exception as err:
+			print('LAPS schema unavailable; permissions unassessed: %s' % err)
+			return False
+		if not any(attributes.values()):
+			ui.emit(laps_permissions.schema_status(attributes))
+			return False
+		ok = True
+		for index, entry in enumerate(entries):
+			if index:
+				print()
+			lines, assessed = await laps_permissions.detail_lines(
+				self.connection, entry, attributes, self.cache, ui.output_width())
+			ui.emit(lines)
+			ok = assessed and ok
+		ui.out(records.count_line(len(entries)))
+		return ok
+
+	def _laps_permissions_completions(self):
+		return self._laps_completions()
 
 	async def do_groupmembers(self, path='.', recursive='1'):
 		"""Members of a group, like msldap's groupmembers but with paths as for cd.
@@ -1198,7 +1541,7 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		return navigation.PositionalCompleter([self._cd_completions()])
 
 	async def do_rbcd(self, path='.', action=None, principal=None):
-		"""Resource-based constrained delegation (msDS-AllowedToActOnBehalfOfOtherIdentity).
+		"""Show or change resource-based constrained delegation.
 
 		rbcd [path]                  lists the principals allowed to act on behalf of the object
 		rbcd <path> add <principal>  allows a principal (SID or account name)
@@ -1223,7 +1566,7 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			if not sids:
 				print('%s: no RBCD configured' % target)
 				return True
-			names = await acl.resolve(self.connection, sids)
+			names = await acl.resolve(self.connection, sids, self.cache)
 			print('RBCD on %s - allowed to act on its behalf:' % target)
 			ui.emit(['  %s  (%s)' % (names.get(s, s), s) for s in sids])
 			return True
@@ -1248,12 +1591,20 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 	def _rbcd_completions(self):
 		return navigation.PositionalCompleter([self._cd_completions(), WordCompleter(['add', 'clear'])])
 
-	async def do_keycred(self, path='.', action=None):
+	async def do_keycred(self, path='.', action=None, file_or_id=None):
 		"""Key credentials (msDS-KeyCredentialLink), used for shadow-credentials attacks.
 
-		keycred [path]        lists the key credentials on the object
-		keycred <path> clear  removes all of them
-		Adding one is msldap's 'shadowcred'. Clearing is undoable.
+		keycred [path]                 lists the key credentials on the object
+		keycred <path> add [file.pfx]   adds a shadow credential and saves its key and certificate
+		keycred <path> remove <id>     removes one credential by Device ID or Key ID
+		keycred <path> clear           removes all key credentials
+
+		Paths work as for cd. Adding preserves existing credentials and is undoable by deleting
+		only the new value. Remove and clear are also undoable. All writes go through opsec.
+		Listing shows persistent Device IDs and Key IDs; ambiguous IDs are refused.
+		The PFX has no password and is created with mode 0600, without overwriting existing files.
+		Without a filename a unique keycred-<id>.pfx is used in the current local directory.
+		It is saved before the LDAP write and retained on failure; dryrun creates no file.
 		"""
 		if self.connection is None:
 			print('Not connected, run login first')
@@ -1261,30 +1612,65 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		target = self._resolve_path(path)
 		if target is None:
 			return False
-		values = None
-		async for entry, err in self.connection.pagedsearch('(objectClass=*)', ['msDS-KeyCredentialLink'],
+		if (action not in (None, 'add', 'remove', 'clear') or
+			(file_or_id is not None and action not in ('add', 'remove')) or
+			(action == 'remove' and not file_or_id)):
+			print('Usage: keycred [path] [add [file.pfx] | remove <device-id|key-id> | clear]')
+			return False
+		values, subject, found = None, None, False
+		async for entry, err in self.connection.pagedsearch('(objectClass=*)', ['msDS-KeyCredentialLink', 'sAMAccountName'],
 				tree=target, search_scope=BASE):
 			if err is not None:
 				print(records.search_error(err, target))
 				return False
+			found = True
 			values = entry['attributes'].get('msDS-KeyCredentialLink')
+			subject = entry['attributes'].get('sAMAccountName')
+		if not found:
+			print('No object returned for %s (missing object or no read access)' % target)
+			return False
 		values = values if isinstance(values, list) else ([values] if values else [])
 		if action is None:
 			if not values:
 				print('%s: no key credentials' % target)
 				return True
 			print('%s: %d key credential%s' % (target, len(values), '' if len(values) == 1 else 's'))
-			ui.emit(['  %s' % (v if len(str(v)) <= 80 else str(v)[:80] + '...') for v in values])
+			from msldap_ops.keycred import format_value
+			for value in values:
+				ui.emit(format_value(value))
 			return True
+		if action == 'add':
+			from msldap_ops.keycred import format_value, generate, save_pfx
+			try:
+				value, pfx = generate(subject or target, target)
+				if self.gate.mode != 'dryrun':
+					filename = save_pfx(pfx, file_or_id)
+					print('PFX saved to %s (no password)' % filename)
+			except (OSError, ValueError) as e:
+				print('Cannot prepare key credential: %s' % e)
+				return False
+			ui.emit(format_value(value))
+			with hooks.labeled('keycred add on %s' % target):
+				ok, err = await self.connection.modify(target, {'msDS-KeyCredentialLink': [('add', [value])]})
+			if not ok and err is None:
+				err = ValueError('LDAP modify was not successful')
+			return self._report(err, ok, 'keycred add on %s' % target)
+		if action == 'remove':
+			from msldap_ops.keycred import matches
+			selected = [value for value in values if matches(value, file_or_id)]
+			if len(selected) != 1:
+				print('Expected one matching key credential, found %d (use a unique Device ID or Key ID)' % len(selected))
+				return False
+			with hooks.labeled('keycred remove %s on %s' % (file_or_id, target)):
+				ok, err = await self.connection.modify(target, {'msDS-KeyCredentialLink': [('delete', selected)]})
+			return self._report(err, ok, 'keycred remove %s on %s' % (file_or_id, target))
 		if action == 'clear':
 			with hooks.labeled('keycred clear on %s' % target):
 				ok, err = await self.connection.modify(target, {'msDS-KeyCredentialLink': [('replace', [])]})
 			return self._report(err, ok, 'keycred clear on %s' % target)
-		print("Unknown action '%s', expected clear" % action)
-		return False
 
 	def _keycred_completions(self):
-		return navigation.PositionalCompleter([self._cd_completions(), WordCompleter(['clear'])])
+		return navigation.PositionalCompleter([self._cd_completions(), WordCompleter(['add', 'remove', 'clear']), None])
 
 	def _report(self, err, ok, description):
 		if err is not None:
@@ -1399,19 +1785,42 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 	def _getsd_completions(self):
 		return self._cd_completions()
 
-	async def _print_objects(self, query, attrs, base, scope, count=True):
+	async def _print_objects(self, query, attrs, base, scope, count=True, icons=False):
 		controls = [sd_flags_control()] if any(a.lower() == 'ntsecuritydescriptor' for a in attrs) else None
+		icons = icons and ui.output_width() is not None
+		metadata = self._known_metadata() if icons else {}
+		# Request missing display metadata together, preserving the selected visible attributes.
+		extra = []
+		if icons and '*' not in attrs:
+			known = metadata.get(base.lower(), {}) if scope == BASE else {}
+			classes = records.object_classes(known)
+			classes = [classes] if isinstance(classes, str) else classes
+			for attr in ('objectClass', 'userAccountControl'):
+				if attr.lower() in {a.lower() for a in attrs} or attr.lower() in known:
+					continue
+				if attr == 'userAccountControl' and classes and 'user' not in {c.lower() for c in classes}:
+					continue  # UAC applies to accounts, not containers, groups or domains.
+				extra.append(attr)
+		request_attrs = attrs + extra
 		n, error = 0, None
 		search = SearchWatch()
 		hooks.add_listener(search)
 		try:
-			async for entry, err in self.connection.pagedsearch(query, attrs, controls=controls, tree=base, search_scope=scope):
+			async for entry, err in self.connection.pagedsearch(query, request_attrs, controls=controls, tree=base, search_scope=scope):
 				if err is not None:
 					error = err
 					break
 				n += 1
+				dn, attributes = entry['objectName'], entry['attributes']
+				known = dict(metadata.get(dn.lower(), {}))
+				known.update(records.object_metadata(attributes))
+				classes = records.object_classes(known)
+				icon = records.object_icon(classes) if icons and classes else None
+				disabled = icons and records.account_disabled(known) is True
+				if extra:
+					attributes = {name: value for name, value in attributes.items() if name.lower() not in {a.lower() for a in extra}}
 				# a single object (cat) gets the cache note at its DN, several at the count line
-				ui.emit(records.record_lines(entry['objectName'], entry['attributes'], None if count else search.cached_at))
+				ui.emit(records.record_lines(dn, attributes, None if count else search.cached_at, icon, disabled))
 		finally:
 			hooks.remove_listener(search)
 		if error is not None:

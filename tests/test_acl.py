@@ -198,3 +198,59 @@ def test_cached_result_without_sd_flags_is_not_used(tmp_path):
 	client = SidCacheClient()
 	result = asyncio.run(acl.collect(client, 'CN=g,DC=x', cache))
 	assert len(client.calls) == 1 and result[3] is None
+
+
+async def test_missing_account_keeps_known_domain_and_original_sid():
+	class MissingAccount:
+		async def resolv_sid(self, sid):
+			return 'NORTH', '???', None
+	sid = D + '-1133'
+	assert await acl.resolve(MissingAccount(), [sid]) == {sid: 'NORTH\\<unresolved RID 1133> (%s)' % sid}
+
+
+async def test_unknown_domain_and_lookup_errors_keep_original_sid():
+	class MissingAccount:
+		async def resolv_sid(self, sid):
+			return '???', '???', None
+
+	class LookupError:
+		async def resolv_sid(self, sid):
+			return None, None, ValueError('lookup failed')
+
+	class RaisedError:
+		async def resolv_sid(self, sid):
+			raise ValueError('lookup failed')
+
+	sid = D + '-1133'
+	for client in (MissingAccount(), LookupError(), RaisedError()):
+		assert await acl.resolve(client, [sid]) == {sid: sid}
+
+
+async def test_msldap_resolves_known_sids_and_trusted_domain_rids_without_account_queries():
+	from types import SimpleNamespace
+
+	from msldap.client import MSLDAPClient
+
+	class Client(MSLDAPClient):
+		def __init__(self):
+			super().__init__(None, None)
+			self.domainsid = D
+			self._domainsid_cache[D] = 'NORTH'
+			self.trust_queries = 0
+
+		async def get_all_trusts(self):
+			self.trust_queries += 1
+			yield SimpleNamespace(securityIdentifier=foreign, flatName='SEVENKINGDOMS', name='sevenkingdoms.local'), None
+
+		async def pagedsearch(self, *args, **kwargs):
+			raise AssertionError('foreign accounts and well-known SIDs need no account search')
+			yield  # async generator, like the real pagedsearch
+
+	foreign = 'S-1-5-21-1798895762-2647094234-2649376422'
+	client = Client()
+	for _ in range(2):
+		names = await acl.resolve(client, ['S-1-5-11', foreign + '-512', foreign + '-1001'])
+		assert names['S-1-5-11'] == 'BUILTIN\\Authenticated Users'
+		assert names[foreign + '-512'] == 'SEVENKINGDOMS\\Domain Admins'
+		assert names[foreign + '-1001'] == 'SEVENKINGDOMS\\<unresolved RID 1001> (%s-1001)' % foreign
+	assert client.trust_queries == 1

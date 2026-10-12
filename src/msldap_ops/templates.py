@@ -11,8 +11,9 @@ from typing import Dict, List, Optional
 
 from msldap.ldap_objects.adcertificatetemplate import (
 	EKUS_NAMES, MSADCertificateTemplate, MSADCertificateTemplate_ATTRS, CertificateNameFlag,
-	EnrollmentFlag, PrivateKeyFlag,
+	EnrollmentFlag, PrivateKeyFlag, IMPLICIT_TOKEN_SIDS,
 )
+from winacl.dtyp.ace import AceFlags, ACEType
 from msldap.wintypes.asn1.sdflagsrequest import SDFlagsRequest, SDFlagsRequestValue
 
 from msldap_ops.privileged import as_list, attr, escape_filter_value, sid_string, table
@@ -22,6 +23,9 @@ TEMPLATE_ATTRIBUTES = MSADCertificateTemplate_ATTRS + [
 	'msPKI-Certificate-Policy', 'whenCreated', 'whenChanged',
 ]
 CA_ATTRIBUTES = ['name', 'dNSHostName', 'certificateTemplates']
+POLICY_ATTRIBUTES = ['msPKI-Cert-Template-OID', 'msDS-OIDToGroupLink']
+AGENT_OID = '1.3.6.1.4.1.311.20.2.1'
+ENROLLMENT_RIGHT = '0e10c968-78fb-11d2-90d4-00c04f79dc55'
 
 # bits that make a template easier to abuse
 RISKY_BITS = {
@@ -84,6 +88,10 @@ class TemplateInfo:
 	entry: dict
 	cas: List[str] = field(default_factory=list)  # 'name (host)'
 	vulns: Dict[str, dict] = field(default_factory=dict)
+	reviews: Dict[str, dict] = field(default_factory=dict)
+	linked_groups: List[str] = field(default_factory=list)
+	policy_objects: List[str] = field(default_factory=list)
+	policy_status: Optional[str] = None
 
 	@property
 	def name(self):
@@ -121,9 +129,15 @@ async def current_token(client):
 	if not res or not res.startswith('u:') or '\\' not in res:
 		return 'low privileged users (whoami: %s)' % res, fallback, 'could not determine the bound user'
 	domain, sam = res[2:].split('\\', 1)
-	found = await _search(client, '(sAMAccountName=%s)' % escape_filter_value(sam), ['distinguishedName'], client._tree)
+	found = await _search(client, '(sAMAccountName=%s)' % escape_filter_value(sam), ['distinguishedName', 'msDS-PrincipalName'], client._tree)
 	if not found:
 		note = '%s\\%s is not in the connected domain, checked as a low privileged user' % (domain, sam)
+		return 'low privileged users', fallback, note
+	# sAMAccountName alone is only unique within a domain. A same-named local
+	# account must never supply the token of a user bound through a trust.
+	resolved_name = attr(found[0], 'msDS-PrincipalName')
+	if len(found) != 1 or not isinstance(resolved_name, str) or resolved_name.casefold() != res[2:].casefold():
+		note = 'could not verify %s in the connected domain, checked as a low privileged user' % res[2:]
 		return 'low privileged users', fallback, note
 	dn = attr(found[0], 'distinguishedName') or found[0]['objectName']
 	token = []
@@ -165,13 +179,138 @@ async def collect(client, name=None):
 			info.vulns = template.is_vulnerable2(tokengroups)
 		templates.append(info)
 	templates.sort(key=lambda t: (t.name or '').lower())
+	for info in templates:
+		add_reviews(info)
+	await check_issuance_policies(client, config, templates, tokengroups)
 	return TemplateReport(templates, principal, tokengroups, note)
 
 
-async def resolve_principals(client, info):
+def add_reviews(info):
+	"""Structural observations, kept apart from findings for the evaluated token."""
+	from msldap_ops import acl
+	t = info.template
+	if t.allows_authentication() and not t.requires_manager_approval():
+		version = int(t.Template_Schema_Version or 0)
+		policies = as_list(t.RA_Application_Policies)
+		if version == 1 or (version > 1 and t.RA_Signature == 1 and AGENT_OID in policies):
+			info.reviews['ESC3 target'] = {'Reason': 'Accepts enrollment-agent requests; an agent certificate and suitable CA restrictions are still required.'}
+	if t.nTSecurityDescriptor is None or 'ESC4' in info.vulns:
+		return
+	controls = set()
+	owner = t.nTSecurityDescriptor.Owner
+	if owner and not acl.is_privileged(str(owner)):
+		controls.add(str(owner))
+	for ace in (t.nTSecurityDescriptor.Dacl.aces if t.nTSecurityDescriptor.Dacl else []):
+		if ace.AceFlags & AceFlags.INHERIT_ONLY_ACE:
+			continue
+		entry = acl.Entry(ace, str(ace.Sid), acl.GuidNames())
+		if not entry.allow or acl.is_privileged(entry.sid):
+			continue
+		if {'FullControl', 'GenericAll', 'GenericWrite', 'WriteDacl', 'WriteOwner'} & set(entry.rights) or (
+			'WriteProperty' in entry.rights and entry.object is None):
+			controls.add(entry.sid)
+	if controls:
+		info.reviews['ESC4 ACL'] = {'Reason': 'Principals outside known privileged SID groups own or have allow ACEs for template control; denies, group membership and effective access need review.',
+			'SIDs': sorted(controls)}
+
+
+def enrollment_sids(sd):
+	"""Applicable enrollment allow ACEs; return None if the DACL needs manual review.
+
+	A deny or an unsupported ACE prevents a positive ESC13 finding. This deliberately
+	avoids claiming effective access from an allow ACE in a more complex DACL.
+	"""
+	if sd is None or sd.Dacl is None:
+		return None
+	sids = set()
+	for ace in sd.Dacl.aces:
+		if ace.AceFlags & AceFlags.INHERIT_ONLY_ACE:
+			continue
+		if ace.AceType not in (ACEType.ACCESS_ALLOWED_ACE_TYPE, ACEType.ACCESS_ALLOWED_OBJECT_ACE_TYPE):
+			return None
+		mask = int(ace.Mask)
+		guid = getattr(ace, 'ObjectType', None)
+		if (mask & 0x10000000 and guid is None) or (mask & 0x100 and (guid is None or str(guid).lower() == ENROLLMENT_RIGHT)):
+			sids.add(str(ace.Sid))
+	return sids
+
+
+async def check_issuance_policies(client, config, infos, tokengroups):
+	"""Resolve template issuance-policy OIDs to their LDAP group links (ESC13).
+
+	The filter matches the bofhound preset, allowing its broader cached search to
+	answer this read. No group memberships or CA endpoints are queried.
+	"""
+	from msldap_ops.hooks import QueryAborted
+	wanted = [info for info in infos if attr(info.entry, 'msPKI-Certificate-Policy')]
+	if not wanted:
+		return
+	try:
+		entries = await _search(client, '(objectClass=msPKI-Enterprise-Oid)', POLICY_ATTRIBUTES, 'CN=OID,%s' % pki_base(config))
+	except QueryAborted:
+		raise
+	except Exception as err:
+		for info in wanted:
+			info.policy_status = 'Unassessed: issuance-policy search failed.'
+			info.reviews['ESC13 unassessed'] = {'Reason': 'Could not read issuance policy group links: %s' % err}
+		return
+	policies = {}
+	objects = {}
+	for entry in entries:
+		for oid in as_list(attr(entry, 'msPKI-Cert-Template-OID')):
+			policies.setdefault(oid, set()).update(as_list(attr(entry, 'msDS-OIDToGroupLink')))
+			dn = entry.get('objectName') or attr(entry, 'distinguishedName')
+			if dn:
+				objects.setdefault(oid, set()).add(dn)
+	token = set(tokengroups) | IMPLICIT_TOKEN_SIDS
+	for info in wanted:
+		oids = as_list(attr(info.entry, 'msPKI-Certificate-Policy'))
+		missing = [oid for oid in oids if oid not in policies]
+		if missing:
+			info.reviews['ESC13 unassessed'] = {'Reason': 'Issuance policy OIDs were not returned; group links unassessed: %s' % ', '.join(missing)}
+		info.policy_objects = sorted({dn for oid in oids for dn in objects.get(oid, ())})
+		info.linked_groups = sorted({group for oid in oids for group in policies.get(oid, ())})
+		if not info.linked_groups:
+			info.policy_status = ('Unassessed: referenced issuance-policy objects were not returned.' if missing else
+				'No msDS-OIDToGroupLink returned by LDAP for the referenced policies; ESC13 not established.')
+			continue
+		t = info.template
+		enrollers = enrollment_sids(t.nTSecurityDescriptor)
+		can_enroll = bool(token & enrollers) if enrollers is not None else False
+		unrestricted = not t.requires_manager_approval() and not t.requires_authorized_signatures()
+		if t.allows_authentication() and can_enroll and unrestricted:
+			info.policy_status = 'Enrollment and linked-group prerequisites met for the evaluated token.'
+			info.vulns['ESC13'] = {'SIDs': sorted(token & enrollers),
+				'Reason': 'Users can enroll for client authentication and issuance policies link to groups: %s' % ', '.join(info.linked_groups)}
+		else:
+			reasons = []
+			if t.nTSecurityDescriptor is None or t.nTSecurityDescriptor.Dacl is None:
+				reasons.append('security descriptor or DACL not returned')
+			elif enrollers is None:
+				reasons.append('deny or unsupported ACEs require manual access review')
+			elif not can_enroll:
+				reasons.append('no applicable enrollment allow ACE for the evaluated token')
+			if not t.allows_authentication():
+				reasons.append('template does not allow client authentication')
+			if t.requires_manager_approval():
+				reasons.append('manager approval required')
+			if t.requires_authorized_signatures():
+				reasons.append('authorized signatures required')
+			info.policy_status = 'ESC13 not established: %s.' % '; '.join(reasons)
+			info.reviews['ESC13 policy'] = {'Reason': info.policy_status}
+
+
+async def resolve_principals(client, info, cache=None):
 	"""SID -> 'DOMAIN\\name' for the SIDs in the template's security descriptor."""
 	if info.template.nTSecurityDescriptor is None:
 		return {}
+	if cache is not None:
+		from msldap_ops import acl
+		from winacl.dtyp.security_descriptor import SECURITY_DESCRIPTOR
+		sd = info.template.nTSecurityDescriptor
+		sd = SECURITY_DESCRIPTOR.from_bytes(sd) if isinstance(sd, bytes) else sd
+		sids = [sd.Owner, sd.Group] + [ace.Sid for aces in (sd.Dacl, sd.Sacl) if aces for ace in aces.aces]
+		return await acl.resolve(client, list(dict.fromkeys(str(sid) for sid in sids if sid is not None)), cache)
 	table, err = await client.resolv_sd(info.template.nTSecurityDescriptor)
 	if err is not None:
 		return {}
@@ -186,7 +325,9 @@ def summary_lines(report):
 	rows = [['Name', 'CAs', 'Client Auth', 'Enrollee Subject', 'Approval', 'Vulnerabilities']]
 	for info in report.templates:
 		t = info.template
-		vulns = ', '.join(sorted(info.vulns)) if info.enabled else '-'
+		reviews = {key.split(' ', 1)[0] for key in info.reviews} - info.vulns.keys()
+		findings = [esc if esc in info.vulns else '%s [?]' % esc for esc in sorted(set(info.vulns) | reviews)]
+		vulns = ', '.join(findings) if info.enabled else '-'
 		rows.append([
 			info.name, ', '.join(ca.split(' ')[0] for ca in info.cas) or '(not published)',
 			'yes' if t.allows_authentication() else 'no',
@@ -237,6 +378,10 @@ def detail_lines(info, principals, principal):
 		add('RA Application Policies', _ekus(t.RA_Application_Policies))
 	if attr(e, 'msPKI-Certificate-Policy'):
 		add('Issuance Policies', as_list(attr(e, 'msPKI-Certificate-Policy')))
+		add('Policy Objects', info.policy_objects or ['None returned'])
+		add('Linked Groups', info.linked_groups or ['None returned'])
+		if info.policy_status:
+			add('ESC13 Check', info.policy_status)
 	add('Schema Version', t.Template_Schema_Version)
 	add('Validity Period', format_period(attr(e, 'pKIExpirationPeriod')))
 	add('Renewal Period', format_period(attr(e, 'pKIOverlapPeriod')))
@@ -266,6 +411,12 @@ def detail_lines(info, principals, principal):
 		lines.append('  %s Vulnerabilities for %s%s' % (MARK, principal, '' if info.enabled else ' (template not published, not exploitable yet)'))
 		for esc in sorted(info.vulns):
 			lines.append('    %-30s: %s' % (esc, info.vulns[esc]['Reason']))
+	if info.reviews:
+		lines.append('  Review points')
+		for key, review in sorted(info.reviews.items()):
+			lines.append('    [review] %-21s: %s' % (key, review['Reason']))
+			for name in sorted(principals.get(sid, sid) for sid in review.get('SIDs', [])):
+				lines.append('      Principal: %s' % name)
 	return lines
 
 

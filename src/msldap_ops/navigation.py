@@ -211,8 +211,7 @@ class PositionalCompleter(Completer):
 
 
 class DNCompleter(Completer):
-	"""Completes cd arguments: '..', children of the current DN (relative, at any depth known),
-	naming contexts (absolute)."""
+	"""Complete direct children and naming contexts; offer deeper paths after an unescaped comma."""
 
 	def __init__(self, get_current, get_known_dns, get_naming_contexts, get_children=None, limit=200):
 		self.get_current = get_current
@@ -250,8 +249,13 @@ class DNCompleter(Completer):
 	def get_completions(self, document, complete_event):
 		text = document.text_before_cursor
 		typed = text.lstrip("'").lower()
+		# Appending a character also recognizes a trailing, unescaped comma as a new RDN.
+		deep = len(split_dn(typed + '_')) > 1
+		ncs = {normalize(nc) for nc in self.get_naming_contexts() or []}
 		count = 0
 		for candidate in self.candidates():
+			if not deep and len(split_dn(candidate)) > 1 and normalize(candidate) not in ncs:
+				continue
 			if candidate.lower().startswith(typed):
 				yield Completion(quote(candidate), -len(text), display=candidate)
 				count += 1
@@ -259,9 +263,13 @@ class DNCompleter(Completer):
 					return
 
 
-def tree_lines(known_dns, root, depth=None):
-	"""ASCII tree of the known DNs below root (RDN names), up to depth levels."""
+def directory_tree(known_dns, root, depth=None, metadata=None, full_names=False):
+	"""Rich tree of DNs below root (RDN labels), up to depth levels."""
+	from rich.tree import Tree
+	from msldap_ops.records import object_label
+
 	root_n = normalize(root)
+	metadata = metadata or {}
 	children = {}
 	for dn in known_dns:
 		if not is_under(dn, root) or normalize(dn) == root_n:
@@ -272,19 +280,20 @@ def tree_lines(known_dns, root, depth=None):
 		for i in range(len(rel), 0, -1):
 			parent = normalize(join_dn(rel[i:] + split_dn(root)))
 			node = join_dn(rel[i - 1:] + split_dn(root))
-			children.setdefault(parent, {})[normalize(node)] = rel[i - 1]
+			children.setdefault(parent, {})[normalize(node)] = (rel[i - 1], node)
 
-	lines = [root]
+	tree = Tree(object_label(root, metadata.get(root_n), root=True), guide_style='bright_black')
 
-	def walk(dn_n, prefix, level):
+	def walk(dn_n, branch, level):
 		if depth is not None and level >= depth:
 			return
-		items = sorted(children.get(dn_n, {}).items(), key=lambda kv: kv[1].lower())
-		for i, (child_n, name) in enumerate(items):
-			last = i == len(items) - 1
+		items = sorted(children.get(dn_n, {}).items(), key=lambda kv: kv[1][0].lower())
+		for child_n, (name, full_dn) in items:
 			more = '' if depth is None or level + 1 < depth or not children.get(child_n) else ' (+%d)' % len(children[child_n])
-			lines.append('%s%s %s%s' % (prefix, '`--' if last else '|--', name, more))
-			walk(child_n, prefix + ('    ' if last else '|   '), level + 1)
+			label = object_label(full_dn if full_names else name, metadata.get(child_n))
+			label.append(more, style='bright_black')
+			child = branch.add(label)
+			walk(child_n, child, level + 1)
 
-	walk(root_n, '', 0)
-	return lines
+	walk(root_n, tree, 0)
+	return tree

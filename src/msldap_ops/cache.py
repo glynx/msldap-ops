@@ -31,8 +31,10 @@ import os
 import re
 import time
 
+from msldap_ops.identities import IdentityCatalogue
+
 DEFAULT_CACHE_DIR = 'msldap-ops-cache'
-DEFAULT_TTL = 1800
+DEFAULT_TTL = 7200
 FORMAT_VERSION = 1
 
 
@@ -191,6 +193,7 @@ class QueryCache:
 		self.misses = 0
 		self.last_stored = None  # when the result of the last hit was stored
 		self._dirty = False
+		self.identities = IdentityCatalogue(self.directory, persist=persist)
 
 	# --- target -------------------------------------------------------------
 	@property
@@ -210,6 +213,7 @@ class QueryCache:
 		self.load()
 
 	def load(self):
+		self.identities.import_files()
 		if not self.persist or self.path is None or not os.path.exists(self.path):
 			return
 		try:
@@ -232,6 +236,7 @@ class QueryCache:
 			json.dump({'version': FORMAT_VERSION, 'server': self.server, 'account': self.account,
 				'queries': self.queries, 'dns': self.dns}, f)
 		os.replace(tmp, self.path)
+		self.identities.mark_file(self.path)
 		self._dirty = False
 
 	# --- queries ------------------------------------------------------------
@@ -279,6 +284,8 @@ class QueryCache:
 		if not self.enabled:
 			return
 		self.queries[key] = {'stored': time.time(), 'query': parts, 'entries': [raw_to_json(r) for r in raws]}
+		item = self.queries[key]
+		self.identities.observe(item['entries'], item['stored'], self.server, self.account)
 		self._dirty = True
 
 	def seen(self, raw):
@@ -366,6 +373,27 @@ class QueryCache:
 					except Exception:
 						continue
 		return names
+
+	def object_classes(self):
+		"""DN -> objectClass values from unexpired cached results (newest wins)."""
+		return {dn: attrs['objectclass'] for dn, attrs in self.object_metadata().items() if attrs.get('objectclass')}
+
+	def object_metadata(self):
+		"""Types and account flags from unexpired cached results, newest value per attribute wins."""
+		if not self.enabled:
+			return {}
+		metadata = {}
+		now = time.time()
+		for item in sorted(self.queries.values(), key=lambda v: v['stored']):
+			if now - item['stored'] > self.ttl:
+				continue
+			for entry in item['entries']:
+				for name, values in entry['a']:
+					name = name.lower()
+					if name in ('objectclass', 'useraccountcontrol') and values:
+						decoded = [base64.b64decode(v).decode('utf-8', 'replace') for v in values]
+						metadata.setdefault(entry['dn'].lower(), {})[name] = decoded if name == 'objectclass' else decoded[0]
+		return metadata
 
 	# --- hook listener ------------------------------------------------------
 	def query_entry(self, query, entry):

@@ -121,3 +121,34 @@ def test_changes_are_journaled(gate, tmp_path):
 	assert record['changes'] == [{'op': 'replace', 'attribute': 'unicodePwd', 'values': ['<hidden>']}]
 	assert record['ok'] is True and record['server'] == 'dc01'
 	assert out == []  # off: nothing shown
+
+
+@pytest.mark.parametrize('operation, args', [
+	(add, ('CN=x,DC=x', {'objectClass': ['user']})),
+	(modify, ('CN=x,DC=x', {'description': [('add', 'example')]})),
+	(delete, ('CN=x,DC=x',)),
+])
+@pytest.mark.parametrize('answer, allowed', [('y', True), ('n', False), ('q', False)])
+def test_confirm_write_gates_all_write_operations(gate, operation, args, answer, allowed):
+	gate, out = gate
+	gate.set_mode('confirm-write')
+	gate.ask.answers.append(answer)
+	ok, err = run(operation, *args)
+	assert ok is allowed
+	assert bool(sent) is allowed
+	assert gate.ask.asked == 1
+	assert out[0].startswith('[change #1] ')
+	gate.end_command()
+	assert out[-1].startswith('[opsec] addusertogroup: ')
+
+
+def test_confirm_write_all_resets_for_next_command(gate):
+	gate, out = gate
+	gate.set_mode('confirm-write')
+	gate.ask.answers.extend(['a', 'n'])
+	assert run(delete, 'CN=x,DC=x') == (True, None)
+	assert run(delete, 'CN=y,DC=x') == (True, None)
+	assert gate.ask.asked == 1
+	gate.start_command('next')
+	assert run(delete, 'CN=z,DC=x')[0] is False
+	assert gate.ask.asked == 2

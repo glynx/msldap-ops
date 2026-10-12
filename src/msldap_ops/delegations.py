@@ -10,6 +10,8 @@ Each kind is one LDAP query:
 - rbcd: msDS-AllowedToActOnBehalfOfOtherIdentity is set; its DACL names who may act on the object
 """
 
+from winacl.dtyp.security_descriptor import SECURITY_DESCRIPTOR
+
 from msldap_ops.privileged import as_list, attr, sid_string
 
 TRUSTED_FOR_DELEGATION = 0x80000
@@ -57,6 +59,8 @@ def constrained_row(entry):
 
 def rbcd_row(entry):
 	sd = attr(entry, 'msDS-AllowedToActOnBehalfOfOtherIdentity')
+	if isinstance(sd, bytes):
+		sd = SECURITY_DESCRIPTOR.from_bytes(sd)
 	allowed = []
 	if sd is not None and getattr(sd, 'Dacl', None) is not None:
 		allowed = [str(ace.Sid) for ace in sd.Dacl.aces]
@@ -66,15 +70,20 @@ def rbcd_row(entry):
 ROW = {'unconstrained': unconstrained_row, 'constrained': constrained_row, 'rbcd': rbcd_row}
 
 
+def section(title, rows):
+	heading = '%s (%d)' % (title, len(rows))
+	return [heading] + ([] if rows else ['  (none)'])
+
+
 def format_unconstrained(rows):
-	lines = ['Unconstrained delegation (%d)' % len(rows)]
+	lines = section('Unconstrained delegation', rows)
 	for row in sorted(rows, key=lambda r: r['name'].lower()):
 		lines.append('  %s' % row['name'])
 	return lines
 
 
 def format_constrained(rows):
-	lines = ['Constrained delegation (%d)' % len(rows)]
+	lines = section('Constrained delegation', rows)
 	for row in sorted(rows, key=lambda r: r['name'].lower()):
 		mode = 'protocol transition' if row['protocol_transition'] else 'Kerberos only'
 		lines.append('  %s  [%s]' % (row['name'], mode))
@@ -85,7 +94,7 @@ def format_constrained(rows):
 
 def format_rbcd(rows, names=None):
 	names = names or {}
-	lines = ['Resource-based constrained delegation (%d)' % len(rows)]
+	lines = section('Resource-based constrained delegation', rows)
 	for row in sorted(rows, key=lambda r: r['name'].lower()):
 		lines.append('  %s' % row['name'])
 		for sid in row['allowed']:

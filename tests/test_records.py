@@ -1,8 +1,10 @@
 import datetime
 
+import pytest
+
 from winacl.dtyp.security_descriptor import SECURITY_DESCRIPTOR
 
-from msldap_ops import records
+from msldap_ops import records, ui
 from msldap_ops.shell import MSLDAPOpsConsole
 
 DOMAIN = 'DC=essos,DC=local'
@@ -104,9 +106,11 @@ class TreeClient:
 	def __init__(self):
 		self.calls = []
 
-	async def get_tree_plot(self, dn, level=2):
-		self.calls.append((dn, level))
-		return {dn: {'CN=Domain Admins,%s' % dn: {}, 'CN=Domain Users,%s' % dn: {}, 'CN=krbtgt,%s' % dn: {}}}
+	async def pagedsearch(self, query, attributes, tree=None, search_scope=2):
+		self.calls.append((tree, search_scope))
+		assert attributes == ['distinguishedName', 'objectClass', 'userAccountControl']
+		for name, kind in [('Domain Admins', 'group'), ('Domain Users', 'group'), ('krbtgt', 'user')]:
+			yield {'objectName': 'CN=%s,%s' % (name, tree), 'attributes': {'objectClass': ['top', kind]}}, None
 
 
 async def test_ls(capsys):
@@ -133,6 +137,89 @@ async def test_ls(capsys):
 	assert capsys.readouterr().out == 'CN=Domain Admins,CN=Users,%s\nCN=Domain Users,CN=Users,%s\n' % (DOMAIN, DOMAIN)
 	assert await console.do_ls('CN=x*,CN=Users') is True
 	assert capsys.readouterr().out == 'No match for CN=x*\n'
+
+
+async def test_terminal_ls_uses_types_from_cd_without_another_query(monkeypatch, capsys):
+	monkeypatch.setattr(ui, 'output_width', lambda: 140)
+	console = MSLDAPOpsConsole(None)
+	console.connection = TreeClient()
+	console._current_dn = DOMAIN
+	root = 'CN=Users,' + DOMAIN
+	console._directory_metadata = {root.lower(): {'objectclass': ['top', 'container']}}
+	assert await console.do_cd(root) is True
+	assert await console.do_ls() is True
+	assert console.connection.calls == [(root, 1)]
+	assert capsys.readouterr().out.splitlines() == [
+		'📁 ' + root, '├── 👥 CN=Domain Admins', '├── 👥 CN=Domain Users', '└── 👤 CN=krbtgt',
+	]
+	assert await console.do_ls('CN=Domain*') is True
+	out = capsys.readouterr().out
+	assert '👥 CN=Domain Admins' in out and 'CN=krbtgt' not in out
+	assert len(console.connection.calls) == 1
+
+
+async def test_terminal_cat_gets_type_in_same_query_and_keeps_selected_attributes(monkeypatch, capsys):
+	class Client(FakeClient):
+		async def pagedsearch(self, query, attributes, controls=None, tree=None, search_scope=2):
+			self.calls.append((query, attributes, controls, tree, search_scope))
+			yield {'objectName': tree, 'attributes': {'name': 'essos', 'objectClass': ['top', 'domain', 'domainDNS']}}, None
+
+	monkeypatch.setattr(ui, 'output_width', lambda: 140)
+	console = MSLDAPOpsConsole(None)
+	console.connection = Client()
+	console._current_dn = DOMAIN
+	assert await console.do_cat('.', 'name') is True
+	assert console.connection.calls == [('(objectClass=*)', ['name', 'objectClass', 'userAccountControl'], None, DOMAIN, 0)]
+	out = capsys.readouterr().out
+	assert 'DN: 🌐 ' + DOMAIN in out and 'name: essos' in out
+	assert 'objectClass:' not in out
+	assert await console.do_cat('.', 'name,objectClass') is True
+	assert 'objectClass:' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('classes, icon', [
+	(['top', 'person', 'user', 'computer'], '🖥️'),
+	(['top', 'user', 'computer', 'msDS-GroupManagedServiceAccount'], '⚙️'),
+	(['top', 'container', 'groupPolicyContainer'], '📜'),
+	(['top', 'organizationalUnit'], '🗂️'),
+	(['top', 'someUnknownClass'], '📄'),
+	(None, '📄'),
+])
+def test_type_icons_prefer_specific_classes(classes, icon):
+	assert records.object_icon(classes) == icon
+
+
+@pytest.mark.parametrize('value, disabled', [
+	(514, True), (512, False), (0, False), (0x10002, True),
+	(b'514', True), (['514'], True), (None, None), ([], None), ('invalid', None),
+])
+def test_account_disabled_uses_only_the_accountdisable_bit(value, disabled):
+	assert records.account_disabled({'userAccountControl': value}) is disabled
+	assert records.account_disabled({}) is None
+
+
+@pytest.mark.parametrize('status, marker', [(514, ' [disabled]'), (512, ''), (None, '')])
+async def test_cat_account_status_keeps_metadata_out_of_selected_attributes(status, marker, monkeypatch, capsys):
+	class Client(FakeClient):
+		async def pagedsearch(self, query, attributes, controls=None, tree=None, search_scope=2):
+			self.calls.append(attributes)
+			values = {'name': 'jon.snow', 'objectClass': ['top', 'person', 'user']}
+			if status is not None:
+				values['userAccountControl'] = status
+			yield {'objectName': tree, 'attributes': values}, None
+
+	monkeypatch.setattr(ui, 'output_width', lambda: 140)
+	console = MSLDAPOpsConsole(None)
+	console.connection = Client()
+	console._current_dn = 'CN=jon.snow,' + DOMAIN
+	assert await console.do_cat('.', 'name') is True
+	assert len(console.connection.calls) == 1
+	out = capsys.readouterr().out
+	assert out.splitlines()[1] == 'DN: 👤 ' + console._current_dn + marker
+	assert 'objectClass:' not in out and 'userAccountControl:' not in out
+	if status is not None:
+		assert await console.do_cat('.', 'name,userAccountControl') is True
+		assert 'userAccountControl:' in capsys.readouterr().out
 
 
 def test_rdn_matches():

@@ -87,7 +87,7 @@ PRESETS = {
 			PresetQuery('enterprise CAs', '(objectClass=pKIEnrollmentService)', PKI),
 			PresetQuery('root CAs, AIA CAs, NTAuth store', '(objectClass=certificationAuthority)', PKI),
 			PresetQuery('certificate templates', '(objectClass=pKICertificateTemplate)', PKI),
-			PresetQuery('issuance policies', '(objectClass=msPKI-Enterprise-Oid)', PKI),
+			PresetQuery('issuance policies', '(objectClass=msPKI-Enterprise-Oid)', PKI, ALL_WITH_SD + ['msDS-OIDToGroupLink']),
 		],
 	),
 	'partitions': (
@@ -103,8 +103,8 @@ PRESETS = {
 	),
 }
 
-# what 'bofhound_collect all' runs; dns is left out because it can be large
-ALL = ['domain', 'users', 'computers', 'groups', 'ous', 'containers', 'gpos', 'trusts', 'fsps', 'schema', 'adcs', 'partitions']
+# Every preset is part of 'all'; explicit names allow narrower collections.
+ALL = list(PRESETS)
 
 
 def naming_contexts(serverinfo, default_tree=None):

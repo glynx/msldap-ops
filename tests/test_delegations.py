@@ -71,3 +71,21 @@ def test_command_single_kind(capsys):
 	assert asyncio.run(c.do_delegations('unconstrained')) is True
 	assert len(c.connection.queries) == 1
 	assert asyncio.run(c.do_delegations('bogus')) is False
+
+
+def test_rbcd_raw_descriptor():
+	# msldap's normal result conversion returns this attribute as bytes.
+	row = delegations.rbcd_row({'objectName': 'CN=pc,DC=x', 'attributes': {
+		'msDS-AllowedToActOnBehalfOfOtherIdentity': aces.rbcd_with(None, SID)}})
+	assert row['allowed'] == [SID]
+
+
+def test_sections_are_separated_and_empty_sections_explicit(capsys):
+	c = MSLDAPOpsConsole(None)
+	c.connection = Client()
+	asyncio.run(c.do_delegations())
+	out = capsys.readouterr().out
+	assert '\n\nConstrained delegation' in out
+	assert not any(line and set(line) == {'-'} for line in out.splitlines())
+	assert '\n\nResource-based constrained delegation' in out
+	assert delegations.format_unconstrained([])[-1] == '  (none)'

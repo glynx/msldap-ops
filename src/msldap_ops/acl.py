@@ -225,17 +225,58 @@ class Entry:
 		return bool(self.findings) and not is_privileged(self.sid)
 
 
-async def resolve(client, sids):
-	"""SID -> 'DOMAIN\\name' (msldap's resolv_sid: well-known SIDs without a query, others with
-	one cached search each)."""
+async def resolve(client, sids, cache=None):
+	"""Resolve display labels from the identity catalogue, then through msldap.
+
+	msldap knows well-known SIDs/RIDs and loads domain names from trusts. An unknown account
+	in a known domain keeps its full SID alongside the domain and RID; this is not a name lookup.
+	"""
+	import time
+	from msldap.client import KNOWN_DOMAIN_RIDS, KNOWN_SIDS
+	from msldap_ops.identities import dns_name, last_seen
+
 	names = {}
+	def historical(label, observed):
+		if time.time() - observed > cache.ttl:
+			return '%s (last seen: %s)' % (label, last_seen(observed))
+		return label
+
+	prefill_sid_names(client, cache, sids)
 	for sid in sids:
+		principal, known_domain = None, None
+		if cache is not None and cache.enabled and sid.upper() not in KNOWN_SIDS:
+			domain_sid = sid.upper().rsplit('-', 1)[0]
+			principal = cache.identities.get('principal', sid.upper())
+			known_domain = cache.identities.domain(domain_sid)
+			live_domain = getattr(client, '_domainsid_cache', {}).get(domain_sid)
+			connected_sid = str(getattr(client, 'domainsid', '') or '').upper()
+			domain = (known_domain or {}).get('flat') or live_domain or (known_domain or {}).get('name')
+			if principal and not domain and connected_sid and domain_sid != connected_sid:
+				# Even a users-only collection carries the foreign object's domain DN.
+				domain = dns_name(principal['dn'])
+			if principal and domain:
+				observed = min(principal['observed'], known_domain['observed']) if known_domain else principal['observed']
+				names[sid] = historical('%s\\%s' % (domain, principal['name']), observed)
+				continue
+			if known_domain and domain_sid != connected_sid:
+				rid = sid.rsplit('-', 1)[-1]
+				user = KNOWN_DOMAIN_RIDS.get(int(rid)) if rid.isdigit() else None
+				label = '%s\\%s' % (known_domain['name'], user or '<unresolved RID %s> (%s)' % (rid, sid))
+				names[sid] = historical(label, known_domain['observed'])
+				continue
 		try:
 			domain, user, err = await client.resolv_sid(sid)
 		except Exception:
 			domain, user, err = None, None, True
+		if principal:
+			domain = domain if domain not in (None, '', '???') else dns_name(principal['dn'])
+			label = '%s\\%s' % (domain, principal['name']) if domain else principal['name']
+			names[sid] = historical(label, principal['observed'])
+			continue
 		if err is None and user not in (None, '???'):
 			names[sid] = '%s\\%s' % (domain, user) if domain else user
+		elif err is None and domain not in (None, '', '???'):
+			names[sid] = '%s\\<unresolved RID %s> (%s)' % (domain, sid.rsplit('-', 1)[-1], sid)
 		else:
 			names[sid] = sid
 	return names
@@ -244,7 +285,7 @@ async def resolve(client, sids):
 def prefill_sid_names(client, cache, sids):
 	"""Puts the account names of cached objects into msldap's SID cache, so that resolv_sid does
 	not search for them."""
-	if cache is None or not hasattr(client, '_sid_cache'):
+	if cache is None or not cache.enabled or not hasattr(client, '_sid_cache'):
 		return
 	known = cache.account_names()
 	for sid in sids:
@@ -277,15 +318,21 @@ async def collect(client, dn, cache=None):
 			if err is not None:
 				raise err
 			raw = entry['attributes'].get('nTSecurityDescriptor')
+	return await decode(client, raw, cache, source)
+
+
+async def decode(client, raw, cache=None, source=None):
+	"""Decode an already collected AD security descriptor and resolve its principals."""
 	if raw is None:
 		return None
+	if isinstance(raw, bytes) and (len(raw) < 20 or raw[0] != 1):
+		raise ValueError('Invalid AD security descriptor header')
 	sd = raw if isinstance(raw, SECURITY_DESCRIPTOR) else SECURITY_DESCRIPTOR.from_bytes(raw)
 	sids = []
 	for sid in [sd.Owner, sd.Group] + [ace.Sid for ace in (sd.Dacl.aces if sd.Dacl else [])]:
 		if sid is not None and str(sid) not in sids:
 			sids.append(str(sid))
-	prefill_sid_names(client, cache, sids)
-	principals = await resolve(client, sids)
+	principals = await resolve(client, sids, cache)
 	names = GuidNames(schema_names_from_cache(cache))
 	entries = [Entry(ace, principals.get(str(ace.Sid), str(ace.Sid)), names) for ace in (sd.Dacl.aces if sd.Dacl else [])]
 	return sd, entries, principals, source
@@ -340,14 +387,14 @@ def blocks(entries_rows, indent='  ', width=None):
 	return lines
 
 
-def format_acl(dn, sd, entries, principals, source=None, show='all', width=None):
+def format_acl(dn, sd, entries, principals, source=None, show='all', width=None, finding_marker=MARK):
 	lines = ['ACL of %s' % dn]
 	if source is not None:
 		from msldap_ops.records import cached_note
 		lines[0] += cached_note(source)
 	owner = str(sd.Owner) if sd.Owner is not None else None
 	if owner:
-		mark = '  %s owner is not privileged (can rewrite the DACL)' % MARK if not is_privileged(owner) else ''
+		mark = '  %s owner is not privileged (can rewrite the DACL)' % finding_marker if not is_privileged(owner) else ''
 		lines.append('  Owner: %s%s' % (principals.get(owner, owner), mark))
 	if sd.Group is not None:
 		lines.append('  Group: %s' % principals.get(str(sd.Group), str(sd.Group)))
@@ -367,7 +414,7 @@ def format_acl(dn, sd, entries, principals, source=None, show='all', width=None)
 	rows = [('Access', 'Principal', 'Rights', 'Object', 'Applies to', '')]
 	for e in shown:
 		access = ('allow' if e.allow else 'deny') + (' (inh.)' if e.inherited else '')
-		finding = '%s %s' % (MARK, ', '.join(e.findings)) if e.risky else ''
+		finding = '%s %s' % (finding_marker, ', '.join(e.findings)) if e.risky else ''
 		rows.append((access, e.principal, ', '.join(e.rights), e.object or '-', e.scope, finding))
 	lines.append('')
 	# Principal, Rights, Object, Applies to and the finding wrap at word boundaries when the

@@ -52,6 +52,29 @@ async def test_unwritable_file(console, tmp_path, capsys):
 	assert 'Cannot write' in capsys.readouterr().out
 
 
+@pytest.mark.parametrize('command', ['map', 'tree'])
+async def test_rich_trees_redirect_without_colors(command, console, tmp_path, monkeypatch):
+	from msldap_ops.cache import QueryCache
+
+	class Client:
+		_tree = 'DC=x'
+		_serverinfo = {'namingContexts': ['DC=x']}
+
+		async def get_tree_plot(self, dn, level=1):
+			return {dn: {'CN=[red]child,' + dn: {}}}
+
+	console.connection = Client()
+	console._current_dn = 'DC=x'
+	console.cache = QueryCache(str(tmp_path / 'cache'), persist=False)
+	console.cache.dns = {'cn=[red]child,dc=x': ['CN=[red]child,DC=x', 0]}
+	monkeypatch.setattr(ui, 'enabled', lambda: True)
+	target = tmp_path / (command + '.txt')
+	assert await console._run_single_command(command, ['>', str(target)]) is True
+	text = target.read_text()
+	assert text.startswith('DC=x\n└── CN=[red]child\n')
+	assert '\x1b' not in text
+
+
 async def test_opsec_lines_stay_on_the_screen(tmp_path, capsys):
 	from msldap_ops.opsec import default_out
 	target = tmp_path / 'x.txt'

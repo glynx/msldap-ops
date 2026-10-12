@@ -96,9 +96,9 @@ ATTRS='*,nTSecurityDescriptor'
 
 echo
 echo "== bofhound_collect presets"
-ops collect.txt login "bofhound_collect all" "bofhound_collect dns" "query (sAMAccountName=$LOWPRIV_USER) $ATTRS" log
+ops collect.txt login "bofhound_collect all" "query (sAMAccountName=$LOWPRIV_USER) $ATTRS" log
 check "bofhound_collect all runs without failed queries" '^[0-9]+ objects from [0-9]+ queries, 0 failed$' "$RESULTS/collect.txt"
-check "bofhound_collect dns returns DNS nodes" '^  dns/DNS nodes \(domain zones\) +[1-9]' "$RESULTS/collect.txt"
+check "bofhound_collect all includes DNS nodes" '^  dns/DNS nodes \(domain zones\) +[1-9]' "$RESULTS/collect.txt"
 
 echo
 echo "== query logging"
@@ -142,11 +142,20 @@ echo "== certificate templates"
 check "table of templates" '^  Name +CAs +Client Auth +Enrollee Subject +Approval +Vulnerabilities$' "$RESULTS/templates-north.txt"
 check "checked for the bound user" "^Vulnerabilities checked for NORTH\\\\$LOWPRIV_USER\\." "$RESULTS/templates-north.txt"
 check "User template flags decoded one per line" '^  Certificate Name Flag +: SUBJECT_ALT_REQUIRE_UPN$' "$RESULTS/templates-north.txt"
-check "template table needs 4 searches" '^\[opsec\] templates: 4 LDAP queries sent$' "$RESULTS/templates-north.txt"
+check "templates needs 4 searches, plus issuance policies when referenced" '^\[opsec\] templates: [45] LDAP queries sent$' "$RESULTS/templates-north.txt"
 "$OPS" --no-cache --no-log "$ESSOS_URL" login "templates vulnerable" >"$RESULTS/templates-essos.txt" 2>&1 || true
 check "essos: ESC1 template marked" '^  Enrollee Supplies Subject +: True \[!\]$' "$RESULTS/templates-essos.txt"
 check "essos: ESC1 reported for $ESSOS_LOWPRIV_USER" "^  \\[!\\] Vulnerabilities for ESSOS\\\\$ESSOS_LOWPRIV_USER" "$RESULTS/templates-essos.txt"
 check "essos: ESC1 finding" '^    ESC1 +: ' "$RESULTS/templates-essos.txt"
+"$OPS" --no-cache --no-log "$ESSOS_URL" login "templates ESC13" >"$RESULTS/templates-esc13.txt" 2>&1 || true
+# Some GOAD installations publish the policy OID without a readable group link.
+# The template name alone must not imply a finding.
+check "essos: ESC13 evaluated from LDAP policy links" '^  ESC13 Check +: (Enrollment and linked-group prerequisites met|No msDS-OIDToGroupLink returned by LDAP|ESC13 not established:)' "$RESULTS/templates-esc13.txt"
+if grep -qE '^  ESC13 Check +: Enrollment and linked-group prerequisites met' "$RESULTS/templates-esc13.txt"; then
+  check "essos: ESC13 finding matches its prerequisites" '^    ESC13 +: ' "$RESULTS/templates-esc13.txt"
+elif grep -qE '^  ESC13 Check +: No msDS-OIDToGroupLink returned by LDAP' "$RESULTS/templates-esc13.txt"; then
+  check_cmd "essos: no ESC13 finding without a returned group link" bash -c '! grep -qE "^    ESC13 +: " "$1"' _ "$RESULTS/templates-esc13.txt"
+fi
 echo "   INFO  essos vulnerable templates: $(grep -E '^Template ' "$RESULTS/templates-essos.txt" | cut -d' ' -f2 | tr '\n' ' ')"
 echo "   INFO  essos findings: $(grep -oE '^    ESC[0-9]+' "$RESULTS/templates-essos.txt" | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
 
@@ -178,8 +187,17 @@ check "a new session reuses the persisted cache" '^\[opsec\] find_admins: no LDA
 check "flush empties the cache" '^Dropped [0-9]+ cached quer(y|ies) and the DN index$' "$RESULTS/cache-3.txt"
 check "after a flush the queries are sent again" '^\[opsec\] find_admins: [0-9]+ LDAP quer(y|ies) sent$' "$RESULTS/cache-3.txt"
 "$OPS" "${CACHE_ARGS[@]}" "$URL" login "cache flush" "bofhound_collect adcs" templates >"$RESULTS/cache-4.txt" 2>&1 || true
-check "templates reuses the ADCS data of bofhound_collect" '^\[opsec\] templates: 2 LDAP queries sent, 2 answered from the cache$' "$RESULTS/cache-4.txt"
+check "templates reuses the ADCS data of bofhound_collect" '^\[opsec\] templates: 2 LDAP queries sent, [23] answered from the cache$' "$RESULTS/cache-4.txt"
 
+echo
+echo "== certificate authorities (LDAP only)"
+"$OPS" --no-log --no-cache "$URL" login cas >"$RESULTS/cas.txt" 2>&1 || true
+check "enterprise CAs are listed" '^CA .+' "$RESULTS/cas.txt"
+check "CA LDAP object ACL is shown" '^  Permissions \(AD enrollment-service object\)$' "$RESULTS/cas.txt"
+check "CA LDAP owner is decoded" '^    Owner: ' "$RESULTS/cas.txt"
+check "ESC7 needs the CA service ACL" '^    ESC7: CA service ManageCA/ManageCertificates permissions; query CA RPC/registry\.$' "$RESULTS/cas.txt"
+check "Web Enrollment needs direct HTTP checks" '^    ESC8: Web Enrollment and NTLM/EPA settings; check the actual HTTP\(S\) endpoint\.$' "$RESULTS/cas.txt"
+check_cmd "no CA check tracebacks" bash -c "! grep -q 'Traceback' '$RESULTS/cas.txt'"
 echo
 echo "== delegation"
 "$OPS" --no-cache --no-log "$URL" login delegations >"$RESULTS/deleg.txt" 2>&1 || true
@@ -189,16 +207,19 @@ echo "   INFO  $INFO_DELEG"
 
 echo
 echo "== navigation"
-"$OPS" --no-log --cache-dir "$RESULTS/cache-nav" "$URL" login "cd .." "cd CN=Users" "cd .." "map . 2" \
+"$OPS" --no-log --cache-dir "$RESULTS/cache-nav" "$URL" login "cd CN=Users" "cd .." "map . 2" \
   "cd CN=Configuration,DC=sevenkingdoms,DC=local" map "cd ../.." >"$RESULTS/navigation.txt" 2>&1 || true
-check "cd .. at the domain root is explained" 'is the top of its naming context on this DC\. Naming contexts of this DC: ' "$RESULTS/navigation.txt"
-check "map shows what cd has seen" '^(\||`)-- CN=Users$' "$RESULTS/navigation.txt"
-check "map shows children of CN=Users" '^(\| |  )  (\||`)-- CN=' "$RESULTS/navigation.txt"
-check "cd into another naming context (Configuration)" '^(\||`)-- CN=Schema$' "$RESULTS/navigation.txt"
+"$OPS" --no-log --no-cache "$URL" login "cd .." >"$RESULTS/navigation-root-error.txt" 2>&1 || true
+check "cd .. at the domain root is explained" 'is the top of its naming context on this DC\. Naming contexts of this DC: ' "$RESULTS/navigation-root-error.txt"
+check "map shows what cd has seen" '^(├|└)── CN=Users$' "$RESULTS/navigation.txt"
+check "map shows children of CN=Users" '^(│| )   (├|└)── CN=' "$RESULTS/navigation.txt"
+check "cd into another naming context (Configuration)" '^CN=Configuration,DC=sevenkingdoms,DC=local$' "$RESULTS/navigation.txt"
+# Schema is a separate naming context, not a child returned by this one-level search.
+check "map shows children of Configuration" '^(├|└)── CN=Services$' "$RESULTS/navigation.txt"
 check "cd ../.. above the Configuration NC is refused" 'CN=Configuration,DC=sevenkingdoms,DC=local is the top of its naming context' "$RESULTS/navigation.txt"
 check_cmd "no raw referral errors" bash -c "! grep -q 'referral' '$RESULTS/navigation.txt'"
 "$OPS" --no-log --no-cache "$URL" login "cat . name" "cat * name" "cd CN=Users" "cat CN=Domain* cn" \
-  "cat ../CN=Builtin name" "cat CN=nosuchobject" "ls ../CN=Builtin" "ls Domain*" >"$RESULTS/cat.txt" 2>&1 || true
+  "cat ../CN=Builtin name" "ls ../CN=Builtin" "ls Domain*" "cat CN=nosuchobject" >"$RESULTS/cat.txt" 2>&1 || true
 check "cat . shows the current object" '^DN: DC=north,DC=sevenkingdoms,DC=local$' "$RESULTS/cat.txt"
 check "cat * shows every child" '^DN: CN=Users,DC=north,DC=sevenkingdoms,DC=local$' "$RESULTS/cat.txt"
 check "cat with a pattern" '^DN: CN=Domain Admins,CN=Users,DC=north,DC=sevenkingdoms,DC=local$' "$RESULTS/cat.txt"
@@ -214,9 +235,23 @@ check "acl decodes the DCSync rights" 'ExtendedRight +Replicating Directory Chan
 check "acl resolves principals" '^  allow .*\\Domain Admins ' "$RESULTS/acl.txt"
 check "getsd accepts paths" '^O:[A-Z0-9-]+G:' "$RESULTS/acl.txt"
 "$OPS" --no-log --opsec show --cache-dir "$RESULTS/cache-acl" "$URL" login "cache flush" "bofhound_collect domain,users,groups" acl >"$RESULTS/acl-cache.txt" 2>&1 || true
-check "acl takes the security descriptor from bofhound_collect" '^ACL of DC=north,DC=sevenkingdoms,DC=local  \(from the cache, ' "$RESULTS/acl-cache.txt"
+check "acl takes the security descriptor from bofhound_collect" '^ACL of DC=north,DC=sevenkingdoms,DC=local  \(from cache: ' "$RESULTS/acl-cache.txt"
 echo "   INFO  $(grep -E '^\[opsec\] acl:' "$RESULTS/acl-cache.txt" || echo 'acl: no LDAP queries')"
 check_cmd "no tracebacks in acl/getsd" bash -c "! grep -q 'Traceback' '$RESULTS/acl.txt'"
+
+echo
+echo "== LAPS permissions (no password reads)"
+"$OPS" --no-log --no-cache --opsec show "$URL" login "laps_permissions all" >"$RESULTS/laps-permissions.txt" 2>&1 || true
+check "LAPS permission review handles schema presence or absence" '^(LAPS permissions of CN=|No LAPS password schema attributes were returned by LDAP\.)' "$RESULTS/laps-permissions.txt"
+check "LAPS permission review requests the DACL" '^ +attributes: cn,sAMAccountName,nTSecurityDescriptor +controls: sd-flags' "$RESULTS/laps-permissions.txt"
+if grep -q '^No LAPS password schema attributes were returned by LDAP\.' "$RESULTS/laps-permissions.txt"; then
+check "LAPS permission review explains the forest schema requirement" '^in Active Directory anywhere in this forest\.$' "$RESULTS/laps-permissions.txt"
+else
+check "LAPS permission review explains confidential reads" 'Confidential attributes require ReadProperty AND ControlAccess' "$RESULTS/laps-permissions.txt"
+check "LAPS permission review decodes read-related ACEs" '^ +(allow|deny).*ReadProperty' "$RESULTS/laps-permissions.txt"
+fi
+check_cmd "LAPS permission review requests no password values" bash -c "! grep -Ei '^ +attributes:.*(ms-Mcs-AdmPwd|msLAPS-(Password|Encrypted))' '$RESULTS/laps-permissions.txt'"
+check_cmd "no tracebacks in LAPS permission review" bash -c "! grep -q 'Traceback' '$RESULTS/laps-permissions.txt'"
 
 echo
 echo "== bofhound import"

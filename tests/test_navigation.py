@@ -1,7 +1,7 @@
 import pytest
 from prompt_toolkit.document import Document
 
-from msldap_ops import navigation
+from msldap_ops import navigation, ui
 from msldap_ops.cache import QueryCache
 from msldap_ops.shell import MSLDAPOpsConsole
 
@@ -64,27 +64,50 @@ def test_completer():
 	assert completions[0].start_position == -4
 
 
-def test_tree_lines():
+def test_completer_hides_deep_matches_until_a_path_is_typed():
+	policy = 'CN=User,CN={31B2},CN=Policies,CN=System'
+	known = ['CN=Users,' + DOMAIN, policy + ',' + DOMAIN,
+		'CN=Doe\\, John,' + DOMAIN, 'CN=Doe\\, John,CN=Users,' + DOMAIN]
+	completer = navigation.DNCompleter(lambda: DOMAIN, lambda: known, lambda: NCS)
+
+	def matches(text):
+		return [c.display_text for c in completer.get_completions(Document(text, len(text)), None)]
+
+	assert matches('CN=User') == ['CN=Users']
+	assert matches('CN=User,') == [policy]
+	assert matches('CN=Doe\\, J') == ['CN=Doe\\, John']
+	assert matches('CN=Config') == ['CN=Configuration,DC=sevenkingdoms,DC=local']
+
+
+def test_directory_tree(capsys):
 	known = ['CN=jon.snow,CN=Users,' + DOMAIN, 'CN=Users,' + DOMAIN, 'CN=WINTERFELL,OU=Domain Controllers,' + DOMAIN,
 		'DC=sevenkingdoms,DC=local']
-	assert navigation.tree_lines(known, DOMAIN) == [
+	ui.emit_tree(navigation.directory_tree(known, DOMAIN))
+	assert capsys.readouterr().out.splitlines() == [
 		DOMAIN,
-		'|-- CN=Users',
-		'|   `-- CN=jon.snow',
-		'`-- OU=Domain Controllers',  # never seen itself, but known as parent
-		'    `-- CN=WINTERFELL',
+		'├── CN=Users',
+		'│   └── CN=jon.snow',
+		'└── OU=Domain Controllers',  # never seen itself, but known as parent
+		'    └── CN=WINTERFELL',
 	]
-	assert navigation.tree_lines(known, DOMAIN, depth=1) == [DOMAIN, '|-- CN=Users (+1)', '`-- OU=Domain Controllers (+1)']
+	ui.emit_tree(navigation.directory_tree(known, DOMAIN, depth=1))
+	assert capsys.readouterr().out.splitlines() == [DOMAIN, '├── CN=Users (+1)', '└── OU=Domain Controllers (+1)']
 
 
 class FakeClient:
 	def __init__(self):
+		self._tree = DOMAIN
 		self._serverinfo = {'namingContexts': NCS}
 		self.trees = []
 
 	async def get_tree_plot(self, dn, level=1):
 		self.trees.append(dn)
 		return {dn: {'CN=child,' + dn: {}}}
+
+	async def pagedsearch(self, query, attributes, tree=None, search_scope=2):
+		assert (query, attributes, search_scope) == ('(distinguishedName=*)', ['distinguishedName', 'objectClass', 'userAccountControl'], 1)
+		self.trees.append(tree)
+		yield {'objectName': 'CN=child,' + tree, 'attributes': {'objectClass': ['top', 'container']}}, None
 
 
 async def test_cd_and_map(tmp_path, capsys):
@@ -106,9 +129,97 @@ async def test_cd_and_map(tmp_path, capsys):
 
 	assert await console.do_map() is True
 	out = capsys.readouterr().out
-	assert '`-- CN=jon.snow' in out
+	assert '└── CN=jon.snow' in out
 	assert "'tree' asks the DC" in out
+	assert console.connection.trees == ['CN=Users,' + DOMAIN, DOMAIN]  # map sends no query
 	assert await console.do_map('CN=Users', 'x') is False
+	assert await console.do_map('.', '-1') is False
+
+
+async def test_live_tree_uses_rich_hierarchy_and_literal_labels(capsys):
+	class Client(FakeClient):
+		async def get_tree_plot(self, dn, level=1):
+			self.trees.append((dn, level))
+			users = 'CN=Users,' + dn
+			return {dn: {users: {users: {'CN=[red]user,' + users: {}}}, 'CN=Computers,' + dn: {}}}
+
+	console = MSLDAPOpsConsole(None)
+	console.connection = Client()
+	console._current_dn = 'CN=Users,' + DOMAIN
+	assert await console.do_tree('2') is True
+	assert console.connection.trees == [(DOMAIN, 2)]
+	assert capsys.readouterr().out.splitlines() == [
+		DOMAIN, '├── CN=Computers', '└── CN=Users', '    └── CN=[red]user',
+	]
+	assert await console.do_tree('.', '1') is True
+	assert console.connection.trees[-1] == ('CN=Users,' + DOMAIN, 1)
+	for dn, level in [(None, 'invalid'), (None, '-1'), ('../..', 1)]:
+		assert await console.do_tree(dn, level) is False
+	assert len(console.connection.trees) == 2
+
+
+async def test_live_tree_explains_query_errors(capsys):
+	class Client(FakeClient):
+		async def get_tree_plot(self, dn, level=1):
+			raise ValueError('test search failure')
+
+	console = MSLDAPOpsConsole(None)
+	console.connection = Client()
+	assert await console.do_tree() is False
+	out = capsys.readouterr().out
+	assert 'test search failure' in out
+	assert 'Traceback' not in out
+
+
+async def test_failed_cd_preserves_directory_and_children(capsys):
+	class Client(FakeClient):
+		async def pagedsearch(self, *args, **kwargs):
+			yield None, ValueError('test search failure')
+
+	console = MSLDAPOpsConsole(None)
+	console.connection = Client()
+	console._current_dn = DOMAIN
+	children = {'CN=Users': 'CN=Users,' + DOMAIN}
+	console._MSLDAPClientConsole__current_dirs = children
+	assert await console.do_cd('CN=Users') is False
+	assert console._current_dn == DOMAIN
+	assert console._MSLDAPClientConsole__current_dirs == children
+	assert 'test search failure' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('command', ['ls', 'map', 'tree'])
+async def test_navigation_views_share_icons_and_disabled_styles(command, tmp_path, monkeypatch, capsys):
+	import re
+	from msldap_ops import records
+
+	children = {name: name + ',' + DOMAIN for name in ('CN=active', 'CN=disabled', 'CN=unknown')}
+	class Client(FakeClient):
+		async def get_tree_plot(self, dn, level=1):
+			self.trees.append(dn)
+			return {dn: {child: {} for child in children.values()}}
+
+	cache = QueryCache(str(tmp_path), persist=False)
+	cache.dns = {dn.lower(): [dn, 0] for dn in children.values()}
+	console = MSLDAPOpsConsole(None, cache=cache)
+	console.connection = Client()
+	console._current_dn = DOMAIN
+	console._MSLDAPClientConsole__current_dirs = children
+	console._directory_metadata = {
+		DOMAIN.lower(): {'objectclass': ['top', 'domainDNS']},
+		children['CN=active'].lower(): {'objectclass': ['top', 'user'], 'useraccountcontrol': 512},
+		children['CN=disabled'].lower(): {'objectclass': ['top', 'user', 'computer'], 'useraccountcontrol': 514},
+	}
+	monkeypatch.setattr(ui, 'output_width', lambda: 140)
+	monkeypatch.setattr(ui, 'enabled', lambda: True)
+	assert await getattr(console, 'do_' + command)() is True
+	out = capsys.readouterr().out
+	plain = re.sub(r'\x1b\[[0-9;]*m', '', out)
+	assert plain.splitlines()[:4] == [
+		'🌐 ' + DOMAIN, '├── 👤 CN=active', '├── 🖥️ CN=disabled [disabled]', '└── CN=unknown',
+	]
+	assert '\x1b[90m🖥️ CN=disabled [disabled]\x1b[0m' in out
+	assert len(console.connection.trees) == (1 if command == 'tree' else 0)
+	assert records.object_label('CN=unknown').plain == 'CN=unknown'
 
 
 def test_quote_survives_shlex():

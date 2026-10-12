@@ -1,6 +1,6 @@
 """Opsec modes: show, confirm or suppress LDAP searches before they are sent.
 
-Works for every command, including the msldap built-ins, through the search hook. Only searches
+Works for every command, including the msldap built-ins, through the search hook. Searches and writes
 are covered; the bind and the RootDSE read during login are not searches in msldap's sense.
 
 Modes:
@@ -12,17 +12,18 @@ Modes:
 	         the queries of cd, ls and cat are only shown
 	searches answered from the cache are never confirmed (nothing is sent); they are shown as
 	one [cache] line and counted separately in the summary after each command
+	confirm-write  only changes are shown and confirmed; searches run silently
 	dryrun   queries are printed but not sent; commands that build queries on earlier results
 	         only show their first stage
 
-Changes (add, modify, delete; e.g. addusertogroup, setsd, changeuserpw) are shown in show, confirm
-and dryrun with DN, operation, attributes and values (passwords hidden, security descriptors as
-SDDL), are always confirmed in confirm and never sent in dryrun.
+Changes (add, modify, delete; e.g. addusertogroup, setsd, changeuserpw) are shown in show, confirm,
+confirm-write and dryrun with DN, operation, attributes and values (passwords hidden, security descriptors as
+SDDL), are always confirmed in confirm and confirm-write and never sent in dryrun.
 """
 
 from msldap_ops import hooks
 
-MODES = ('off', 'show', 'confirm', 'dryrun')
+MODES = ('off', 'show', 'confirm', 'confirm-write', 'dryrun')
 
 # navigation commands: in confirm mode their queries are only shown, not confirmed; for cat only
 # the search of a single object (base scope), cat * can return a whole container
@@ -149,7 +150,8 @@ class OpsecGate:
 
 	def end_command(self):
 		navigation_only = self.command in NAVIGATION_COMMANDS and not self.confirmable
-		if (self.counter or self.cached_counter) and self.mode in ('show', 'confirm', 'dryrun') and not navigation_only:
+		visible = self.changes_shown if self.mode == 'confirm-write' else (self.counter or self.cached_counter)
+		if visible and self.mode != 'off' and not navigation_only:
 			self.out('[opsec] %s: %s' % (self.command, self.summary()))
 		self.command = None
 
@@ -159,6 +161,8 @@ class OpsecGate:
 		if self.mode == 'off' or query.background:
 			return
 		self.cached_counter += 1
+		if self.mode == 'confirm-write':
+			return
 		self.out('[cache] %s  %s  scope=%s' % (query.query, query.base, query.scope))
 
 	async def __call__(self, query):
@@ -167,6 +171,9 @@ class OpsecGate:
 			return hooks.SEND
 		if self._aborted:
 			raise hooks.QueryAborted('aborted by operator')
+		if self.mode == 'confirm-write':
+			self.sent += 1
+			return hooks.SEND
 		self.counter += 1
 		self._kind = 'query'
 		navigation = self._navigation(query)
@@ -188,7 +195,7 @@ class OpsecGate:
 		return decision
 
 	async def write(self, write):
-		"""An add/modify/delete: shown in show, confirm and dryrun, always confirmed in confirm
+		"""An add/modify/delete: shown in show, confirm and dryrun, always confirmed in confirm/confirm-write
 		(also within navigation commands), never sent in dryrun."""
 		if self.mode == 'off':
 			return hooks.SEND

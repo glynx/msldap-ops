@@ -7,6 +7,8 @@ line and colors. NO_COLOR or --no-color switch this off.
 """
 
 import io
+import contextlib
+from contextvars import ContextVar
 import os
 import re
 import shutil
@@ -17,18 +19,24 @@ from rich.console import Console
 from rich.text import Text
 
 _enabled = None
+_help_output = ContextVar('help_output', default=False)
 
 # (regex, style) applied to every line of msldap-ops output, in this order
 RULES = [
 	(r'\[!\]', 'bold red'),
+	(r'\[review\]', 'yellow'),
 	(r'\bTrue \[!\]', 'bold red'),
 	# ESC findings, not template names (GOAD's templates are called ESC1, ...): the finding lines
-	# below "Vulnerabilities" and the last column of the templates table
+	# below "Vulnerabilities" and the vulnerabilities column of the templates table
 	(r'(?<=^    )ESC\d+(?= +: )', 'bold red'),
-	(r'(?<=  )ESC\d+(, ESC\d+)*$', 'bold red'),
+	(r'(?:(?<=  )|(?<=, ))ESC\d+(, ESC\d+)*(?! \[\?\])(?=, |$)', 'bold red'),
+	(r'\bESC\d+ \[\?\]', 'yellow'),
 	(r'\b(kerberoastable|asrep-roastable|unconstrained-delegation|password-not-required)\b', 'red'),
 	(r'\bdelegable\b', 'yellow'),
 	(r'\b(disabled|not found|not published[^)]*|\(not published\))', 'dim'),
+	(r'<unresolved RID \d+>', 'bright_black'),
+	(r'[^\s]+\\.*?(?= \(last seen: )', 'bright_black'),
+	(r'\(last seen: [^)]*\)', 'bright_black'),
 	# the query display of opsec show/confirm/dryrun: header, filter and attribute lines
 	(r'^\[(ldap|dryrun) #\d+\] .*$', 'bright_black'),
 	(r'^ +(filter|attributes): .*$', 'bright_black'),
@@ -39,18 +47,23 @@ RULES = [
 	(r'^ +(set|add|replace|delete) [\w;-]+: .*$', 'yellow'),
 	(r'^\[opsec\].*$', 'dim'),
 	(r'^send\? .*$', 'bold'),
-	(r'^(Privileged groups in|Privileged accounts:|adminCount=1 users|Name or description contains|Template |Errors:).*$', 'bold'),
+	(r'^(Trusts from|Privileged groups in|Privileged accounts:|adminCount=1 users|Name or description contains|Template |CA |Errors:).*$', 'bold'),
+	(r'^(Unconstrained delegation|Constrained delegation|Resource-based constrained delegation) \(\d+\)$', 'bold'),
 	# help category headings and title
-	(r'^(Session|Navigation|Enumeration|Lookup|ADCS|DNS|Writing[^:]*|Other msldap commands):$', 'bold'),
+	(r'^(Session|Connection|Navigation|Enumeration|Lookup|ADCS|DNS|Writing[^:]*|Other commands|Legacy msldap commands):$', 'bold'),
 	(r'^msldap-ops .* - commands$', 'bold'),
-	(r'^  (Permissions|\[!\] Vulnerabilities.*)$', 'bold'),
+	(r'^  (Permissions(?: \(AD enrollment-service object\))?|Review points|Not checked \(requires direct CA access\)|\[!\] Vulnerabilities.*)$', 'bold'),
 	(r'^ACL of .*?(?=  \(from cache: |$)', 'bold'),
+	(r'^LAPS permissions of .*$', 'bold'),
+	(r'^  (Legacy LAPS|Windows LAPS \((clear text|encrypted values)\))$', 'bold'),
 	(r'^  Access +Principal +Rights +Object +Applies to$', 'bold'),
 	(r'^  deny\b', 'yellow'),
+	(r'^      deny\b', 'yellow'),
 	(r'^Note: .*$', 'yellow'),
 	(r'^WARNING: .*$', 'bold yellow'),
 	# records of msldap's query command
 	(r'^DN: .*?(?=  \(from cache: |$)', 'bold cyan'),
+	(r'^DN: .*? \[disabled\](?=  \(from cache: |$)', 'not bold bright_black'),
 	(r'^Attributes:$', 'bright_black'),
 	(r'^  [A-Za-z][\w;-]*:(?= |$)', 'blue'),
 	(r'^\(\d+ objects?\)', 'bright_black'),
@@ -98,8 +111,22 @@ def separator():
 	return Text('\u2500' * min(_width(), 100), style='bright_black')
 
 
+@contextlib.contextmanager
+def help_output():
+	"""Keep help prose plain while preserving bold category headings."""
+	token = _help_output.set(True)
+	try:
+		yield
+	finally:
+		_help_output.reset(token)
+
+
 def styled(line):
 	text = Text(line)
+	if _help_output.get():
+		if re.fullmatch(r'(Session|Connection|Navigation|Enumeration|Lookup|ADCS|DNS|Writing[^:]*|Other commands|Legacy msldap commands):|msldap-ops .* - commands', line):
+			text.stylize('bold')
+		return text
 	for rx, style in _COMPILED:
 		text.highlight_regex(rx, style)
 	return text
@@ -189,13 +216,14 @@ class StyledStream(io.TextIOBase):
 	def __init__(self, target):
 		self.target = target
 		self._buf = ''
+		self.style_output = True
 		self.tee = True  # copy to the transcript; off for an inner stream of a stacked pair
 
 	def write(self, data):
 		from msldap_ops import transcript
 		if self.tee and transcript.active() is not None:
 			transcript.active().output(data)
-		if not enabled():
+		if not enabled() or not self.style_output:
 			return self.target.write(data)
 		self._buf += data
 		if '\n' not in self._buf:
@@ -240,6 +268,15 @@ def emit(lines):
 		lines = [lines]
 	for line in lines:
 		print(line)
+
+
+def emit_tree(tree):
+	"""Render Rich trees through stdout, keeping redirection and transcripts intact."""
+	width = output_width()
+	color = enabled() and width is not None
+	console = Console(file=sys.stdout, force_terminal=color, no_color=not color,
+		width=width or 100000, highlight=False, markup=False)
+	console.print(tree)
 
 
 def out(line):

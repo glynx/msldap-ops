@@ -24,6 +24,7 @@ keepalive, are marked as ``background``.
 
 import asyncio
 import contextlib
+from contextvars import ContextVar
 
 import datetime
 import functools
@@ -54,6 +55,17 @@ _foreground = UNMANAGED
 # while > 0, searches are internal (e.g. reading the old value for an undo): treated as background,
 # so they are not gated, shown or logged (they may be cached, which is harmless)
 _internal_read = 0
+_fresh_reads = ContextVar('fresh_reads', default=False)
+
+
+@contextlib.contextmanager
+def fresh_reads(enabled=True):
+	"""Bypass cached results while retaining logging and opsec for a write command's reads."""
+	token = _fresh_reads.set(enabled or _fresh_reads.get())
+	try:
+		yield
+	finally:
+		_fresh_reads.reset(token)
 
 
 @contextlib.contextmanager
@@ -242,7 +254,7 @@ def _wrap_search(original, controls_param, passthrough=None):
 			# the keepalive has to reach the server, it is neither answered from nor stored in the cache
 			_cache.bind(self)
 			key, parts = query_key(original.__name__, params)
-			raws = _cache.get(key, parts)
+			raws = None if _fresh_reads.get() else _cache.get(key, parts)
 			if raws is not None:
 				info.cached = True
 				if _cache.last_stored is not None:

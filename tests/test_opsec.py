@@ -174,3 +174,32 @@ async def test_console_marks_commands_and_switches_modes(gated, capsys):
 	assert hooks._foreground is None  # no command running anymore
 	assert await console._run_single_command('opsec', ['bogus']) is False
 	assert 'opsec mode: show' in capsys.readouterr().out
+
+
+async def test_confirm_write_runs_reads_silently(gated):
+	gate, out = make_gate('confirm-write')
+	assert len(await search()) == 1
+	gate.cached(hooks.QueryInfo('dc', 'DC=north', '(objectClass=user)', [], 2, []))
+	assert gate.ask.asked == 0
+	assert gate.sent == 1 and gate.cached_counter == 1
+	gate.end_command()
+	assert out == []
+
+
+async def test_confirm_write_shell_mode_and_completion(gated):
+	console = MSLDAPOpsConsole(None)
+	assert await console._run_single_command('opsec', ['confirm-write']) is True
+	assert console.gate.mode == 'confirm-write'
+	assert 'confirm-write' in console._opsec_completions().words
+
+
+async def test_confirm_write_counts_reads_and_aborts_followup_queries(gated):
+	gate, out = make_gate('confirm-write', 'q')
+	assert len(await search()) == 1
+	with pytest.raises(hooks.QueryAborted):
+		await gate.write(hooks.WriteInfo('dc', 'delete', 'CN=x,DC=north', None))
+	results = await search()
+	assert isinstance(results[0][1], hooks.QueryAborted)
+	assert gate.ask.asked == 1
+	gate.end_command()
+	assert out[-1] == '[opsec] test: 1 LDAP query sent, aborted at change #1'

@@ -23,6 +23,7 @@ def test_resolve_uses_rootdse_naming_contexts():
 	assert q['schema GUIDs'].base == 'CN=Schema,CN=Configuration,DC=sevenkingdoms,DC=local'
 	assert q['schema GUIDs'].attributes == ['name', 'schemaIDGUID']
 	assert q['certificate templates'].base == 'CN=Public Key Services,CN=Services,CN=Configuration,DC=sevenkingdoms,DC=local'
+	assert 'msDS-OIDToGroupLink' in q['issuance policies'].attributes
 	assert q['NetBIOS names'].base == 'CN=Partitions,CN=Configuration,DC=sevenkingdoms,DC=local'
 	assert q['DNS nodes (domain zones)'].base == 'DC=DomainDnsZones,DC=north,DC=sevenkingdoms,DC=local'
 	assert q['DNS nodes (forest zones)'].base == 'DC=ForestDnsZones,DC=sevenkingdoms,DC=local'
@@ -34,13 +35,13 @@ def test_resolve_falls_back_to_the_tree_without_rootdse():
 	assert q['schema GUIDs'].base == 'CN=Schema,CN=Configuration,DC=essos,DC=local'
 
 
-def test_all_skips_dns_and_duplicates():
+def test_all_includes_dns_without_duplicates():
 	queries = presets.resolve(['users', 'all', 'users'], CHILD)
 	names = [q.preset for q in queries]
-	assert 'dns' not in names
+	assert names.count('dns') == 2  # one search per naming context
 	assert names[0] == 'users'
 	assert names.count('users') == 1
-	assert set(names) == set(presets.ALL)
+	assert set(names) == set(presets.ALL) == set(presets.PRESETS)
 
 
 def test_unknown_preset():
@@ -50,7 +51,7 @@ def test_unknown_preset():
 
 def test_all_bofhound_queries_request_the_security_descriptor():
 	for q in presets.resolve(['all'], CHILD):
-		if q.preset not in ('schema', 'partitions'):
+		if q.preset not in ('schema', 'partitions', 'dns'):
 			assert q.wants_sd, q.label
 
 
@@ -106,4 +107,4 @@ async def test_bofhound_collect_without_names_lists_presets(capsys):
 	assert await MSLDAPOpsConsole(None).do_bofhound_collect() is True
 	out = capsys.readouterr().out
 	assert '(schemaIDGUID=*)' in out
-	assert '(not in all)' in out
+	assert '(not in all)' not in out

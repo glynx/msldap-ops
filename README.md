@@ -1,31 +1,14 @@
 # msldap-ops
 
-Operator toolkit on top of [msldap](https://github.com/skelsec/msldap), a pure-Python LDAP client
-for Active Directory that does not depend on impacket.
+Operator toolkit for Active Directory on top of [msldap](https://github.com/skelsec/msldap).
+It adds directory navigation, enumeration, permission review and controlled changes to the msldap shell.
+The dependency is the [glynx/msldap fork](https://github.com/glynx/msldap), which carries additional fixes.
 
-Features:
-
-- **Query logging** in a [pyldapsearch](https://github.com/Tw1sm/pyldapsearch)-compatible format, so
-  that collected data can be imported into BloodHound with
-  [bofhound](https://github.com/coffeegist/bofhound). Logs are written to the current working directory.
-
-- **Collection presets** for bofhound, split per object type (users, computers, groups, OUs, GPOs,
-  schema, ADCS, ...), so that no single query returns the whole directory.
-
-- **Query cache** (`cache`): repeated searches are answered from earlier results, persisted per
-  server and account.
-- **Navigation**: `cd` with relative paths, `..` and completion from everything seen so far, `map`
-  as a tree of the known structure.
-- **Opsec modes** (`opsec`): show, confirm or suppress every LDAP search before it is sent, for all
-  commands including the msldap built-ins.
-- **Certificate templates** (`templates`) in a certipy-like layout with decoded flags.
-- **Privileged accounts** (`find_admins`): recursive members of the protected groups, found by SID, with
-  their risky settings.
-
-- **Extended shell**: all msldap shell commands plus the msldap-ops commands.
-
-msldap-ops currently depends on the [glynx/msldap](https://github.com/glynx/msldap) fork, which carries
-fixes that are not (yet) upstream.
+- Browse AD with relative paths, completion, object icons and Rich trees.
+- Collect directory data for BloodHound using presets and [bofhound](https://github.com/coffeegist/bofhound).
+- Review privileged accounts, delegations, trusts, certificate templates, CA object ACLs and LAPS permissions.
+- Reduce repeated queries with persistent caches and reuse known SID names across domain connections.
+- Show or confirm LDAP operations, track changes and undo supported writes.
 
 ## Installation
 
@@ -33,422 +16,102 @@ fixes that are not (yet) upstream.
 uv tool install git+https://github.com/glynx/msldap-ops.git
 ```
 
-Updates: `uv tool upgrade msldap-ops` (msldap is pulled from the `main` branch of the fork).
+Update with `uv tool upgrade msldap-ops`. Python 3.9 or newer is required.
 
-## Usage
+## Quick start
 
-The connection URL is the same as for msldap:
-
-```bash
-msldap-ops 'ldap+ntlm-password://NORTH\user:password@192.168.56.11'
-```
-
-Commands can be passed as additional arguments; `i` drops into the interactive shell:
+Run from a directory for the engagement; query logs and caches are created there by default.
+The connection URL uses msldap's format:
 
 ```bash
-msldap-ops 'ldap+ntlm-password://NORTH\user:password@192.168.56.11' login 'query (adminCount=1) sAMAccountName'
+msldap-ops --opsec show 'ldap+ntlm-password://NORTH\user:password@192.0.2.10'
 ```
 
-## Query logging
+With no commands, msldap-ops logs in and opens the interactive shell. A typical session:
 
-Every search result msldap receives is logged, whether it comes from `query` or from any other
-command (`certify2`, `whoami`, ...). The logs go to `./msldap-ops-logs/` in the current directory:
+```text
+help
+cd CN=Users
+ls
+cat .
+find *admin*
+acl .
+find_admins
+delegations
+templates
+cas
+```
 
-- `msldap-ops_<date>.log`: the results in the pyldapsearch / ldapsearch BOF format
-- `msldap-ops-queries_<date>.jsonl`: one line per query with server, base, scope, filter,
-  attributes, result count and error
+`help <command>` shows parameters and examples. `msldap-ops --help` lists CLI options.
+All msldap shell commands remain available; commands with replacements appear under `Legacy msldap commands`.
 
-Import them with bofhound:
+To run commands directly and then enter the shell:
+
+```bash
+msldap-ops 'ldap+ntlm-password://NORTH\user:password@192.0.2.10' login find_admins i
+```
+
+## ntlmrelayx + SOCKS
+
+For ntlmrelayx's LDAP SOCKS handler, use `--ntlm-bind sicily`.
+The proxy URL example and signing/channel-binding options are in [Connections](docs/operations.md#connections).
+
+## Collect for BloodHound
+
+In the interactive shell:
+
+```text
+bofhound_collect all
+log
+```
+
+Then import the logs:
 
 ```bash
 bofhound -i msldap-ops-logs/
 ```
 
-bofhound needs `nTSecurityDescriptor` to build ACL edges, so request it explicitly, for example
-`query (sAMAccountType=805306368) *,nTSecurityDescriptor`. The `query` command sends the SD flags
-control, so unprivileged users get the owner, group and DACL as well.
-
-## Collecting data for bofhound
-
-`bofhound_collect` runs one query per object type, with `*,nTSecurityDescriptor` and the SD flags control.
-The results are not printed, they go to the query log.
-
-```text
-bofhound_collect                 list the presets and their queries
-bofhound_collect all             everything except DNS
-bofhound_collect users,groups    selected presets
-bofhound_collect all 5           wait 5 seconds between queries
-bofhound_collect all 2-8         wait a random 2-8 seconds (jitter)
-bofhound_collect dns             DNS nodes (computer IP addresses), not part of 'all'
-```
-
-bofhound evaluates DNS nodes since version 0.4.21; older versions list them as unknown objects.
-
-Presets: `domain`, `users`, `computers` (including gMSAs and trust accounts), `groups`, `ous`,
-`containers`, `gpos`, `trusts`, `fsps`, `schema`, `adcs` (enterprise CAs, root/AIA CAs, NTAuth store,
-templates, issuance policies), `partitions` (NetBIOS names) and `dns`. Base DNs are taken from the
-RootDSE, so Configuration and Schema are found on child domain DCs as well.
-
-The presets cover the domain the DC belongs to. For other domains of the forest or trusted forests,
-connect to one of their DCs and run `bofhound_collect` again.
-
-## Privileged accounts
-
-`find_admins` lists the recursive members of Domain Admins, Enterprise/Schema/Enterprise Key Admins,
-Administrators, Account/Server/Print/Backup Operators, Key Admins, Group Policy Creator Owners,
-Domain Controllers and DnsAdmins. Groups are found by SID, so localized names work. Per account:
-
-- `kerberoastable` (user with SPN), `asrep-roastable`, `password-not-required`,
-  `password-never-expires`, `unconstrained-delegation` (not reported for DCs)
-- `delegable`: neither "sensitive and cannot be delegated" nor in Protected Users
-- `disabled`, pwdLastSet and lastLogonTimestamp
-
-It also lists `adminCount=1` users that are no longer in any of these groups, and users, computers
-and groups outside the privileged groups whose sAMAccountName, displayName or description contains
-`adm` (catches `admin`, `Administrator`, `adm_` accounts, admin workstations, "SQL Admins", ...).
-`find_admins <pattern>` uses another pattern, `find_admins -` skips the name search. Direct members from
-other domains (foreign security principals, forest root groups) are shown with their DN. The forest
-root groups can only be listed on a DC of the forest root.
-
-In the shell, `log` shows the log files, `log off` / `log on` pause and resume logging.
-`--log-dir` changes the directory, `--no-log` disables logging completely.
-
-## Certificate templates
-
-```text
-templates                 table: CAs, client authentication, enrollee supplies subject,
-                          manager approval, vulnerabilities
-templates <name>          details of one template
-templates vulnerable      details of the published templates with vulnerabilities
-templates enabled         details of all published templates
-```
-
-The details follow certipy: msPKI-Certificate-Name-Flag, msPKI-Enrollment-Flag and
-msPKI-Private-Key-Flag decoded one flag per line with the security relevant bits marked `[!]`,
-EKUs, manager approval, authorized signatures, validity and renewal period, minimum key size and the
-principals of the enrollment and object control permissions. Vulnerabilities (ESC1-4, ESC9) are
-checked for the token of the bound user; an account bound through a trust is checked as a low
-privileged user of the connected domain. The table needs 4 LDAP searches, the details additionally
-resolve the SIDs of the permissions.
-
-## Navigation
-
-```text
-cd ..                    parent DN (refused above the naming context of the DC, with a hint)
-cd ../..                 two levels up
-cd CN=Computers          relative to the current DN, also deeper: OU=Servers,OU=Tier0
-cd <DN>                  absolute, any naming context of the DC (e.g. CN=Configuration,...)
-ls [path|pattern] [full] children of the current DN (no query) or of a path, e.g. ls CN=Users,
-                         ls Domain*, ls ../OU=*; full prints DNs
-cat [path] [attributes]  attributes of the current object (cat, cat .), of every child (cat *),
-                         of matching children (cat CN=Domain*, cat ../OU=*) or of a DN/path
-query <filter> [attributes] [base|path] [base|one|sub]
-find <name|pattern> [path]  DNs of objects by sAMAccountName or name, '*' as wildcard
-                         (searches the naming context of the current DN)
-acl [path] [all|explicit|risky]  readable ACL of an object (owner, rights, object types, scope)
-getsd [path] [p|g]       msldap's raw security descriptor, with paths as for cd
-map [DN|path] [depth]    tree of the DNs seen so far below a DN (default: current, 3 levels)
-tree [DN] [level]        msldap's tree: queried live from the DC
-```
-
-`cd` completes the children of the current DN, every DN below it that any command has seen so far
-and the naming contexts of the DC. Escaped commas (`CN=Doe\, John`) are handled; completions are
-quoted so that aiocmd's argument parsing keeps them intact. `cat` takes attributes as a comma separated
-list (`cat * cn,description`); msldap's order `cat [attributes] [path]` works as well. `map` sends no query, it draws the DN
-index of the query cache and may therefore be incomplete. `tree` asks the DC (one search per
-container down to the level) and fills the cache, so its results show up in `map` as well.
-
-## ACLs
-
-`acl` shows the security descriptor of an object decoded: owner, group and one line per DACL entry
-with allow/deny, the principal (resolved by name), the rights (FullControl, GenericWrite, WriteDacl,
-WriteProperty, ExtendedRight, ...), the object type the entry is limited to (an attribute like
-`member`, an extended right like `Reset Password`, a validated write like `Self-Membership`) and
-where it applies (this object, descendants, `user objects`).
-
-```text
-ACL of CN=Domain Admins,CN=Users,DC=north,DC=sevenkingdoms,DC=local
-  Owner: NORTH\Domain Admins
-  Group: NORTH\Domain Admins
-  DACL: 24 entries, 9 inherited
-
-  Access        Principal                    Rights         Object           Applies to
-  allow         NORTH\jon.snow               WriteProperty  member           this object   [!] Write member
-  allow         NORTH\helpdesk               ExtendedRight  Reset Password   user objects  [!] Reset Password
-  ...
-```
-
-`[!]` marks entries that let a principal outside the privileged groups take over the object: full
-control, GenericWrite, WriteDacl, WriteOwner, AllExtendedRights, Reset Password, the DCSync rights,
-writing `member`, `servicePrincipalName`, `msDS-KeyCredentialLink`,
-`msDS-AllowedToActOnBehalfOfOtherIdentity` and similar attributes, adding oneself to a group; and a
-non-privileged owner. Privileged are SYSTEM, Enterprise Domain Controllers, Administrators, Account
-Operators, Domain Admins, Domain Controllers, Schema/Enterprise Admins, (Enterprise) Key Admins and
-Enterprise Read-only Domain Controllers (of any domain in the forest), SELF and CREATOR OWNER.
-To get the DN of an account or group, `find jaime.lannister`, `find "Small Council"` or `find *admin*`
-lists type, account name and DN. `acl . risky` shows only the marked entries, `acl . explicit` only the ones not inherited.
-
-Queries: the security descriptor (one base search with the SD flags control, so unprivileged users
-get owner and DACL) and one search per SID that is not well-known. Both come from the query cache
-when possible: the security descriptor from any earlier search that returned the object with the
-SD flags control (e.g. `bofhound_collect`, then the first line says `(from cache: <time>)`), the
-names of SIDs from any cached object with `objectSid` and `sAMAccountName`. After
-`bofhound_collect`, `acl` therefore usually sends no query at all. Attribute and class
-GUIDs are named from a built-in table; others, like the LAPS attributes whose GUIDs differ per
-forest, are named if `bofhound_collect` (preset `schema`) put the schema into the cache.
-
-## LAPS
-
-`laps` reads the local administrator password managed by LAPS, both the legacy version
-(`ms-Mcs-AdmPwd`) and Windows LAPS (`msLAPS-Password`). Reading it is sensitive and privileged, so
-the command needs a target instead of dumping the whole domain by default:
-
-```text
-laps                      the current object, when it is a computer (same as laps .)
-laps kingslanding$        one computer by sAMAccountName or name ('$' optional)
-laps *srv*                computers matching a pattern
-laps all                  every computer with LAPS (reads many passwords!)
-```
-
-For each computer it shows the LAPS version, the password where readable, and the expiration. A
-Windows LAPS encrypted password (`msLAPS-EncryptedPassword`) cannot be decrypted over LDAP alone;
-it is reported as encrypted (decryption needs an RPC call to the DC).
-
-## Query cache
-
-Repeated searches (same base, scope, filter, attributes and controls) within the TTL are answered from
-the cache, without contacting the server. A broader cached search answers narrower ones as well
-(same filter, base DN at or below the cached one, attributes included explicitly or through `*`):
-after `bofhound_collect adcs`, `templates` only asks the server for the token of the bound user. A
-read of a single object (`cat`, `acl`) is answered by any cached result that contains the object with
-the wanted attributes, whatever filter found it: after `bofhound_collect all`, `cat` on a user, group
-or computer sends nothing. This applies to every command, including the msldap built-ins. The cache is kept per server and account and written to `./msldap-ops-cache/` as JSON, so
-a new session reuses it.
-
-```text
-cache                  state, size, hits/misses, cache file
-cache list             cached queries with age and number of results
-cache flush [text]     drop everything, or the queries whose base DN or filter contains text
-cache ttl <seconds>    lifetime of cached results (default 1800, --cache-ttl)
-cache on | off         use the cache or always ask the server
-```
-
-Not cached: the keepalive, searches a command stopped early, failed searches. add/modify/delete
-drop all cached queries. Changes made with other tools show up after the TTL or a `cache flush`.
-Searches answered from the cache send nothing, so `opsec confirm` does not ask for them; `opsec`
-shows them as one `[cache]` line and counts them separately (`[opsec] find_admins: 2 LDAP queries
-sent, 8 answered from the cache`). The query journal records them with `"cached": true`; they are
-not written to the bofhound log again. `--cache-memory-only` keeps the cache off the disk, `--no-cache` disables it.
-
-The cache also keeps an index of every DN seen in a result, for navigation.
-
-## Granting and revoking rights
-
-`grant` and `revoke` add or remove an ACE on an object's DACL for a principal, by a high-level right
-name instead of raw SDDL:
-
-```text
-grant <principal> <right> [path]    add the right
-revoke <principal> <right> [path]   remove it again
-```
-
-`principal` is a SID or an exact account name (resolved to its SID), `path` the target object (as
-for `cd`, default the current object). Rights: `fullcontrol`, `genericwrite`, `writedacl`,
-`writeowner`, `allextendedrights`, `resetpassword`, `dcsync` (adds the two replication ACEs),
-`writemembers`, `writespn`, `writekeycredential` (shadow credentials), `rbcd`.
-
-The command reads the security descriptor, adds or removes the matching ACE(s) and writes back only
-the DACL, so `WriteDacl` on the target is enough (writing the owner would need `WriteOwner` and the
-DC rejects it). `grant` is idempotent (an ACE already present is not added again). The change goes
-through opsec like any other, and `undo` restores the previous DACL.
-
-## Owner, RBCD and key credentials
-
-```text
-chown <path> <principal>        set the owner of an object's security descriptor
-rbcd [path]                     list the principals allowed to act on behalf of the object
-rbcd <path> add <principal>     allow a principal (resource-based constrained delegation)
-rbcd <path> clear               remove all RBCD
-keycred [path]                  list the key credentials (msDS-KeyCredentialLink)
-keycred <path> clear            remove all of them (clean up a shadow-credentials attack)
-```
-
-`chown` needs `WriteOwner`; owning an object lets you rewrite its DACL. `rbcd add` writes an
-allow-all ACE for the principal into `msDS-AllowedToActOnBehalfOfOtherIdentity` (adding a key
-credential is msldap's `shadowcred`). All of these go through opsec and are undoable.
-
-## Editing attributes
-
-`setattr`, `addattr` and `delattr` change an attribute directly, `uac` the account flags:
-
-```text
-setattr <path> <attribute> [value ...]   replace the value(s) (no value clears the attribute)
-addattr <path> <attribute> <value>       add one value to a multi-valued attribute
-delattr <path> <attribute> <value>       remove one value
-uac [path]                               show the userAccountControl flags
-uac <path> +FLAG -FLAG                    set (+) or clear (-) flags
-```
-
-Values are written as given, so attributes with a non-string syntax may be rejected by the server.
-`uac` flag names are those of `userAccountControl`, e.g. `+DONT_REQUIRE_PREAUTH` (AS-REP roasting),
-`+TRUSTED_FOR_DELEGATION`, `-ACCOUNTDISABLE`; a hex value also works. All of these are gated by
-opsec and undoable.
-
-## Changes and undo
-
-Every directory change (add, modify, delete) is recorded in a session change log with its inverse,
-so it can be undone:
-
-```text
-changes       list the changes of this session, newest last, with an index and whether each
-              can be undone
-undo          reverse the last change that can be undone
-undo <n>      reverse change #n
-```
-
-Before a change is sent, the old value it needs for the inverse is read (one background search,
-not shown or logged). `add`/`delete` of a value invert directly, a `replace` is restored to the old
-value, and a created object is removed again. Not undoable automatically: deleting an object,
-changing a password (the old one is unknown) and a value that could not be read back; `changes`
-shows the reason. A successful `undo` removes the change from the list and is not itself added as a
-new change; the query journal still records the undo write for the audit trail.
-
-## Opsec
-
-`opsec <mode>` (or `--opsec show|confirm` on the command line, which also covers the login) controls
-what happens before an LDAP search is sent:
-
-- `off`: nothing (default)
-- `show`: the query (base, scope, filter, attributes, controls) is printed before it is sent
-- `confirm`: the query is printed and needs confirmation: `y` send, `n` skip (the command gets an
-  empty result), `a` send all further queries of the running command, `q` abort the command.
-  The queries of the navigation commands `cd`, `ls` and `cat` of a single object are only shown;
-  `cat *` and `cat` with a pattern search a whole container level and are confirmed.
-- `dryrun`: queries are printed but not sent. Commands that build queries on the results of earlier
-  ones (e.g. `find_admins`) only show their first stage; `help <command>` lists the queries of the
-  msldap-ops commands.
-
-Changes to the directory (add, modify, delete; e.g. `addusertogroup`, `setsd`, `changeuserpw`,
-`addcomputer`, `shadowcred`) go through the same gate: shown in `show`, `confirm` and `dryrun` with
-DN, operation, attributes and values (passwords hidden, security descriptors as SDDL), always
-confirmed in `confirm` (also within navigation commands) and never sent in `dryrun`:
-
-```text
-[change #1] modify CN=Domain Admins,CN=Users,DC=essos,DC=local
-            add member: CN=khal.drogo,CN=Users,DC=essos,DC=local
-send? [y]es / [n]o, skip / [a]ll for this command / [q]uit command:
-```
-
-After each command a summary shows what actually happened: queries and changes sent, skipped, where
-the command was aborted, and how many searches were answered from the cache. Every query and every
-change, including skipped ones, is recorded in the query journal (changes with `"type": "write"`,
-a record of what was changed, e.g. for the cleanup after an engagement).
-
-The msldap shell sends a keepalive search on the domain object every 10 seconds. msldap-ops uses
-300 seconds; `--keepalive SECONDS` changes it, `--keepalive 0` stops it after the login. Keepalive
-queries are not shown or confirmed and not written to the bofhound log, only to the journal.
-
-## Output
-
-The prompt (`msldap-ops <DN> >`) is colored so that it stands out from the command output. All output,
-including the msldap built-in commands, keeps its plain text layout and gets colors on top. `query`
-and `cat` show every object with a separator line, its DN and aligned attribute names, values of
-multi-valued attributes below each other (`query` ends with the number of objects). Results from the
-query cache say so in gray: `(from cache: <time>)` at the DN (`cat`) or the count (`query`, `cat *`); DN and attribute
-names are colored, findings and `[!]` marks are red, `delegable` yellow, the queries shown by `opsec`
-gray. On the terminal long lines wrap at the value column, and a long DN in the prompt is shortened
-(`CN=x,...,DC=essos,DC=local`). Without a terminal (pipes, files) the output is plain text without
-wrapping; `--no-color` or the `NO_COLOR` environment variable switch colors off.
-
-Any command's output can go to a file instead of the screen:
-
-```text
-query (adminCount=1) sAMAccountName > admins.txt
-find_admins >> report.txt
-```
-
-The file gets plain text. Opsec queries and questions stay on the screen, so `opsec confirm` works
-while redirecting.
-
-The whole session can be written to a file as well, each command with a timestamp followed by its
-output (plain text, including the queries shown by `opsec` and the answers to its questions):
-
-```text
-transcript on [file]      start, default ./msldap-ops-transcript_<date>.log (appended)
-transcript off            stop
-transcript                state and file
-msldap-ops --transcript [file] ...   from the start
-```
-
-Commands with secrets (`login` with a password or hash in the URL, `changeuserpw`, `adduser`,
-`addcomputer` with a password) are recorded without arguments. Output redirected with `> file` is
-not repeated in the transcript.
-
-## Differences to msldap
-
-msldap-ops keeps msldap's commands, but changes some where msldap's behaviour is not what a shell
-user expects:
-
-- `cat` takes the path first: `cat [path] [attributes]`. `cat *` shows every child of the current
-  DN (in msldap: all attributes of the current object, now `cat` or `cat .`). msldap's order
-  `cat cn,description CN=Users` is still recognized.
-- `ls` takes a path or pattern (`ls CN=Users`, `ls Domain*`); msldap's `ls <anything>` (full DNs)
-  works as before.
-- `cd` resolves `..`, `../..` and relative paths properly, also with escaped commas, and stops at
-  the top of the naming context with an explanation instead of a referral error.
-- `query` and `cat` print objects in one layout (see [Output](#output)), `query` takes a base path
-  and a scope.
-- A pasted block of several lines runs one command per line.
-
-## History
-
-The command history is kept across sessions in `~/.local/state/msldap-ops/history` (or
-`$XDG_STATE_HOME/msldap-ops/history`), readable by the user only. Commands with secrets - `login`
-with a password or hash in the URL, `adduser`, `changeuserpw`, `addcomputer` with a password - are
-available in the running session but not written to the file. `--history-file` picks another file,
-`--no-history` keeps the history in memory only.
-
-Up/Down search the history for entries starting with the typed text. Ctrl-R opens
-[fzf](https://github.com/junegunn/fzf) over the history if it is installed (the typed text is the
-initial query), otherwise the built-in reverse search.
+`all` includes DNS records for computer IP addresses; `bofhound_collect dns` collects just DNS.
+Collect selected presets with `bofhound_collect users,groups`, or add jitter with `bofhound_collect all 2-8`.
+Connect to each domain's DC separately and combine the logs with bofhound/BloodHound.
+See [Queries and collection](docs/queries.md) for all presets, filters and logging details.
+
+## Commands and reference
+
+| Area | Main commands | Documentation |
+| --- | --- | --- |
+| Navigation and lookup | `cd`, `ls`, `cat`, `find`, `map`, `tree`, `sid2dn` | [Paths, defaults and display](docs/navigation.md) |
+| Queries and enumeration | `query`, `bofhound_collect`, `find_admins`, `delegations`, `trusts`, `log` | [Filters, collection and logs](docs/queries.md) |
+| ADCS | `templates`, `cas` | [Template checks and CA ACL review](docs/adcs.md) |
+| ACLs and LAPS | `acl`, `getsd`, `laps`, `laps_permissions` | [Permissions and password reads](docs/permissions.md) |
+| Directory changes | `grant`, `revoke`, `chown`, `rbcd`, `keycred`, `setattr`, `uac`, `changes`, `undo` | [Writing and cleanup](docs/changes.md) |
+| Session settings | `opsec`, `cache`, `transcript` | [Connections, CLI options, output and history](docs/operations.md) |
+
+`laps` reads passwords; `laps_permissions` reviews read permissions without requesting password values.
+`cas` reviews the CA's AD enrollment-service object and uses yellow `[review]` markers.
+Direct CA RPC/HTTP checks and Windows LAPS decryption are outside the LDAP scope.
+
+## Queries, writes and cached data
+
+`opsec` defaults to `off`. Use `--opsec show` to see queries, `--opsec confirm` to confirm operations,
+or `--opsec confirm-write` to confirm writes while reads run silently.
+Supported changes can be inspected with `changes` and reversed with `undo`; see [cleanup limits](docs/changes.md#changes-and-undo).
+
+Query logging and persistent caching are enabled by default:
+
+| Setting | Default |
+| --- | --- |
+| Query logs | `./msldap-ops-logs/` |
+| Query cache and identity catalogue | `./msldap-ops-cache/` |
+| Query TTL | `7200` seconds (2 hours) |
+| Keepalive | `300` seconds |
+
+A longer TTL reduces LDAP traffic at the cost of freshness. `cache flush` clears current query results;
+retained identity labels survive and show their last observation when old.
+Use one `--cache-dir` per engagement to share known names across its domain connections.
+Details and controls are in [Cache and identities](docs/operations.md#query-cache) and [Opsec](docs/operations.md#opsec).
 
 ## Development
 
-```bash
-uv sync
-uv run msldap-ops --help
-uv run pytest
-```
-
-msldap comes from the `main` branch of [glynx/msldap](https://github.com/glynx/msldap), pinned in
-`uv.lock` (`uv lock --upgrade-package msldap` picks up new commits). To work against a local msldap
-checkout, install it into the venv and run without syncing, otherwise uv puts the locked version back:
-
-```bash
-uv pip install -e ../msldap
-uv run --no-sync msldap-ops ...
-uv run --no-sync pytest
-```
-
-`dev/bofhound-roundtrip.py` writes a small log offline that can be imported with `uvx bofhound` to
-check the format.
-
-### Testing msldap-ops against GOAD
-
-`dev/goad-test-ops.sh` runs queries against a GOAD lab with logging enabled and imports the log with
-bofhound (via `uvx`). It uses the same `dev/goad.env` as the msldap test runner below and the msldap
-checkout in `../msldap` (`MSLDAP_DIR=git` tests the locked git version instead).
-
-### Testing the msldap fork against GOAD
-
-`dev/goad-test-msldap.sh` runs the msldap live test suite and some CLI smoke tests against a
-[GOAD](https://github.com/Orange-Cyberdefense/GOAD) lab. Run it on a host that can reach the lab;
-defaults match a stock GOAD install and can be overridden via environment variables (see the script
-header).
-
-```bash
-dev/goad-test-msldap.sh             # test fork-main (upstream main + our branches)
-dev/goad-test-msldap.sh --compare   # additionally run upstream main as a baseline
-```
-
-Results are written to `dev/results/<timestamp>/`.
+See [Development](docs/development.md) for local checks, the query-log roundtrip and GOAD integration tests.
+Open work is tracked in [TODO.md](TODO.md).

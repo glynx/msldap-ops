@@ -15,7 +15,26 @@ def test_help_exits_cleanly(monkeypatch, capsys):
 	with pytest.raises(SystemExit) as exc:
 		cli.main()
 	assert exc.value.code == 0
-	assert 'msldap-ops' in capsys.readouterr().out
+	out = capsys.readouterr().out
+	assert 'msldap-ops' in out
+	for option in ('--ntlm-bind', '--no-signing', '--no-channel-binding'):
+		assert option in out
+	assert 'LDAPS' in out and 'plain LDAP' in out
+
+
+def test_cli_connection_options_are_parsed(monkeypatch):
+	seen = []
+	async def amain(args):
+		seen.append(args)
+		return 0
+	monkeypatch.setattr(cli, 'amain', amain)
+	monkeypatch.setattr('sys.argv', ['msldap-ops', '--ntlm-bind', 'sicily', '--no-signing',
+		'--no-channel-binding', 'ldap+ntlm-password://NORTH\\user:dummy@dc.example.test'])
+	with pytest.raises(SystemExit) as exc:
+		cli.main()
+	assert exc.value.code == 0
+	assert len(seen) == 1
+	assert seen[0].ntlm_bind == 'sicily' and seen[0].no_signing and seen[0].no_channel_binding
 
 
 async def test_log_command(tmp_path, capsys):
