@@ -17,7 +17,7 @@ from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.patch_stdout import patch_stdout
 
 from msldap_ops import __version__
-from msldap_ops import aces, acl, changes as changelog, hooks, laps, navigation, opsec, presets, privileged, records, templates, ui
+from msldap_ops import aces, acl, changes as changelog, delegations, hooks, laps, navigation, opsec, presets, privileged, records, templates, ui
 from msldap_ops import history as command_history
 from msldap_ops import transcript
 
@@ -65,8 +65,8 @@ class SearchWatch:
 HELP_CATEGORIES = [
 	('Session', ['login', 'opsec', 'log', 'transcript', 'cache', 'changes', 'undo', 'whoami', 'help', 'exit']),
 	('Navigation', ['cd', 'ls', 'cat', 'tree', 'map', 'find', 'query']),
-	('Enumeration', ['bofhound_collect', 'find_admins', 'acl', 'getsd', 'laps', 'groupmembership',
-		'trusts', 'spns', 'asrep', 'pre2000', 'gmsa']),
+	('Enumeration', ['bofhound_collect', 'find_admins', 'delegations', 'acl', 'getsd', 'laps',
+		'groupmembership', 'trusts', 'spns', 'asrep', 'pre2000', 'gmsa']),
 	('Lookup', ['sam2dn', 'sid2dn', 'dn2sid', 'dn2sam', 'sidresolv', 'user', 'machine']),
 	('ADCS', ['templates', 'certtemplates', 'enrollmentservices', 'rootcas', 'ntcas', 'aiacas',
 		'certify', 'certify2', 'addenrollmentright', 'addcerttemplatenameflagaltname']),
@@ -797,6 +797,47 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 
 	def _cat_completions(self):
 		return self._cd_completions()
+
+	async def do_delegations(self, kind='all'):
+		"""Lists accounts configured for Kerberos delegation.
+
+		delegations [kind]   kind: unconstrained, constrained, rbcd, or all (default)
+		  unconstrained  TRUSTED_FOR_DELEGATION (domain controllers excluded)
+		  constrained    msDS-AllowedToDelegateTo set (shows protocol transition vs Kerberos only)
+		  rbcd           msDS-AllowedToActOnBehalfOfOtherIdentity set (who may act on the object)
+		One LDAP query per kind.
+		"""
+		if self.connection is None:
+			print('Not connected, run login first')
+			return False
+		kind = (kind or 'all').lower()
+		kinds = delegations.KINDS if kind == 'all' else (kind,)
+		if kind != 'all' and kind not in delegations.KINDS:
+			print("Unknown kind '%s', expected one of: %s, all" % (kind, ', '.join(delegations.KINDS)))
+			return False
+		base = self.connection._tree
+		total = 0
+		for k in kinds:
+			query, attributes = delegations.QUERIES[k]
+			rows = []
+			async for entry, err in self.connection.pagedsearch(query, attributes, tree=base):
+				if err is not None:
+					print(records.search_error(err, base))
+					return False
+				rows.append(delegations.ROW[k](entry))
+			total += len(rows)
+			if k == 'rbcd':
+				sids = sorted({s for r in rows for s in r['allowed']})
+				names = await acl.resolve(self.connection, sids) if sids else {}
+				ui.emit(delegations.format_rbcd(rows, names))
+			else:
+				ui.emit(delegations.FORMAT[k](rows))
+		if total == 0:
+			print('No delegation configured')
+		return True
+
+	def _delegations_completions(self):
+		return WordCompleter(list(delegations.KINDS) + ['all'])
 
 	async def do_find(self, pattern, path=''):
 		"""Finds objects by account name or name and prints their DNs.
