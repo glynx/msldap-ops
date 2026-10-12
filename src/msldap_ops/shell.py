@@ -626,6 +626,14 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		ncs = info.get('namingContexts') or []
 		return [ncs] if isinstance(ncs, str) else list(ncs)
 
+	def _resolve_path(self, path):
+		"""Resolves a path argument like cd (returns the DN), or prints the reason and returns None."""
+		try:
+			return navigation.resolve(path, self._current_dn, self._naming_contexts())
+		except ValueError as e:
+			print(e)
+			return None
+
 	def _known_dns(self):
 		if self.cache is None:
 			return []
@@ -645,10 +653,8 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		"""
 		if self.connection is None:
 			return await MSLDAPClientConsole.do_cd(self, path)
-		try:
-			target = navigation.resolve(path, self._current_dn, self._naming_contexts())
-		except ValueError as e:
-			print(e)
+		target = self._resolve_path(path)
+		if target is None:
 			return False
 		return await MSLDAPClientConsole.do_cd(self, target)
 
@@ -958,10 +964,8 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		if self.connection is None:
 			print('Not connected, run login first')
 			return False
-		try:
-			dn = navigation.resolve(path, self._current_dn, self._naming_contexts())
-		except ValueError as e:
-			print(e)
+		dn = self._resolve_path(path)
+		if dn is None:
 			return False
 		recurse = str(recursive).lower() not in ('0', 'false', 'no')
 		n = 0
@@ -1022,10 +1026,8 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		if right.lower() not in aces.RIGHTS:
 			print("Unknown right '%s'. Known: %s" % (right, ', '.join(aces.RIGHT_NAMES)))
 			return False
-		try:
-			target = navigation.resolve(path, self._current_dn, self._naming_contexts())
-		except ValueError as e:
-			print(e)
+		target = self._resolve_path(path)
+		if target is None:
 			return False
 		sid = await self._resolve_principal(principal)
 		if sid is None:
@@ -1059,10 +1061,8 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		if self.connection is None:
 			print('Not connected, run login first')
 			return False
-		try:
-			target = navigation.resolve(path, self._current_dn, self._naming_contexts())
-		except ValueError as e:
-			print(e)
+		target = self._resolve_path(path)
+		if target is None:
 			return False
 		ok, err = await self.connection.modify(target, changes)
 		if err is not None:
@@ -1107,10 +1107,8 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		if self.connection is None:
 			print('Not connected, run login first')
 			return False
-		try:
-			target = navigation.resolve(path, self._current_dn, self._naming_contexts())
-		except ValueError as e:
-			print(e)
+		target = self._resolve_path(path)
+		if target is None:
 			return False
 		current = None
 		async for entry, err in self.connection.pagedsearch('(objectClass=*)', ['userAccountControl'],
@@ -1182,10 +1180,8 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		if self.connection is None:
 			print('Not connected, run login first')
 			return False
-		try:
-			target = navigation.resolve(path, self._current_dn, self._naming_contexts())
-		except ValueError as e:
-			print(e)
+		target = self._resolve_path(path)
+		if target is None:
 			return False
 		sid = await self._resolve_principal(principal)
 		if sid is None:
@@ -1212,10 +1208,8 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		if self.connection is None:
 			print('Not connected, run login first')
 			return False
-		try:
-			target = navigation.resolve(path, self._current_dn, self._naming_contexts())
-		except ValueError as e:
-			print(e)
+		target = self._resolve_path(path)
+		if target is None:
 			return False
 		sd = None
 		async for entry, err in self.connection.pagedsearch('(objectClass=*)',
@@ -1264,10 +1258,8 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		if self.connection is None:
 			print('Not connected, run login first')
 			return False
-		try:
-			target = navigation.resolve(path, self._current_dn, self._naming_contexts())
-		except ValueError as e:
-			print(e)
+		target = self._resolve_path(path)
+		if target is None:
 			return False
 		values = None
 		async for entry, err in self.connection.pagedsearch('(objectClass=*)', ['msDS-KeyCredentialLink'],
@@ -1376,10 +1368,8 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		if show not in acl.SCOPE_FILTERS:
 			print("Unknown filter '%s', expected one of: %s" % (show, ', '.join(acl.SCOPE_FILTERS)))
 			return False
-		try:
-			target = navigation.resolve(path, self._current_dn, self._naming_contexts())
-		except ValueError as e:
-			print(e)
+		target = self._resolve_path(path)
+		if target is None:
 			return False
 		try:
 			result = await acl.collect(self.connection, target, self.cache)
