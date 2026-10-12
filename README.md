@@ -78,6 +78,7 @@ bofhound_collect                 list the presets and their queries
 bofhound_collect all             everything except DNS
 bofhound_collect users,groups    selected presets
 bofhound_collect all 5           wait 5 seconds between queries
+bofhound_collect all 2-8         wait a random 2-8 seconds (jitter)
 bofhound_collect dns             DNS nodes (computer IP addresses), not part of 'all'
 ```
 

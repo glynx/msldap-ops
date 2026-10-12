@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import inspect
 import os
+import random
 import re
 import shlex
 import signal
@@ -84,6 +85,20 @@ WRITING_COMMANDS = set(HELP_CATEGORIES[-1][1]) | {
 	'addenrollmentright', 'addcerttemplatenameflagaltname',
 	'dnsadd', 'dnsremove', 'dnsdelete', 'dnsmodify', 'dnsrestore',
 }
+
+
+def parse_delay(value):
+	"""(low, high) seconds for the delay between queries: 'N' is fixed, 'MIN-MAX' is a random
+	jitter per query. Raises ValueError on a bad value."""
+	value = str(value).strip()
+	if '-' in value[1:]:  # a range (not a leading minus)
+		low_s, high_s = value.split('-', 1)
+		low, high = float(low_s), float(high_s)
+	else:
+		low = high = float(value)
+	if low < 0 or high < low:
+		raise ValueError('bad delay range')
+	return low, high
 
 
 def _uac_flag(name):
@@ -466,7 +481,7 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 
 		names: comma separated presets, e.g. 'users,groups', or 'all'.
 		       Without names the presets and their queries are listed.
-		delay: seconds to wait between two queries (default 0).
+		delay: seconds between queries (default 0), or a MIN-MAX range for random jitter (e.g. 2-8).
 
 		'all' runs every preset except 'dns', which can be large. Results are not printed,
 		they go to the query log (see 'log'). All queries request *,nTSecurityDescriptor
@@ -476,11 +491,9 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 			self._print_presets()
 			return True
 		try:
-			delay = float(delay)
-			if delay < 0:
-				raise ValueError
+			low, high = parse_delay(delay)
 		except ValueError:
-			print("Invalid delay '%s', expected seconds" % delay)
+			print("Invalid delay '%s', expected seconds or a min-max range (e.g. 3 or 2-8)" % delay)
 			return False
 		if self.connection is None:
 			print('Not connected, run login first')
@@ -497,8 +510,8 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 		total, failed = 0, 0
 		width = max(len('%s/%s' % (q.preset, q.label)) for q in queries)
 		for i, query in enumerate(queries):
-			if i > 0 and delay > 0:
-				await asyncio.sleep(delay)
+			if i > 0 and high > 0:
+				await asyncio.sleep(low if low == high else random.uniform(low, high))
 			name = ('%s/%s' % (query.preset, query.label)).ljust(width)
 			count, err = await self._run_preset_query(query)
 			total += count

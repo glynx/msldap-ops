@@ -31,7 +31,7 @@
 - [x] Keepalive every 300 s instead of 10 s, `--keepalive`
 - [x] Verify against GOAD (`dev/goad-test-ops.sh`)
 - [ ] Try `confirm` interactively
-- [ ] Optional jitter for `bofhound_collect` delays
+- [x] Jitter for `bofhound_collect`: delay accepts a MIN-MAX range (random per query)
 - [x] Writing operations (add/modify/delete, msldap's addusertogroup, setsd, changeuserpw, ...) go
       through the opsec gate (shown, confirmed, not sent in dryrun) and into the journal
 - [x] Backup before every change (read the old value) and a session change log with undo

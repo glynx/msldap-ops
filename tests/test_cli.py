@@ -81,3 +81,15 @@ def test_pasted_block_runs_line_by_line(capsys):
 	assert ran == [['cache'], ['opsec', 'show'], ['log']]
 	out = capsys.readouterr().out
 	assert 'Command nosuchcommand not found!' in out and 'Cannot parse' in out
+
+
+def test_parse_delay():
+	import pytest
+
+	from msldap_ops.shell import parse_delay
+	assert parse_delay('0') == (0.0, 0.0)
+	assert parse_delay('3') == (3.0, 3.0)
+	assert parse_delay('2-8') == (2.0, 8.0)
+	for bad in ('5-2', 'x', '-1', '2-'):
+		with pytest.raises(ValueError):
+			parse_delay(bad)
