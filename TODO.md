@@ -56,8 +56,8 @@
 
 ## Enumeration
 
-- [ ] Delegation overview (unconstrained, constrained with/without protocol transition, RBCD), with
-      a filter for single kinds
+- [x] Delegation overview (`delegations [unconstrained|constrained|rbcd|all]`): unconstrained
+      (DCs excluded), constrained with the protocol-transition flag, RBCD with allowed principals
 - [x] LAPS in both versions: legacy (`ms-Mcs-AdmPwd`) and Windows LAPS (`msLAPS-Password`); reads a
       targeted computer or pattern, `laps all` for the whole domain. TODO: decrypt
       `msLAPS-EncryptedPassword` via RPC (MS-GKDI), show who can read it from the ACL
@@ -86,8 +86,8 @@
 - [x] Separate records (query output) on the terminal
 - [x] Redirect a command's output to a file (`> file`, `>> file`)
 - [ ] Better command descriptions (parameters, allowed values) for the msldap-ops commands
-- [ ] Factor out the shared "resolve a path argument like cd, print the error cleanly" helper used
-      by cd, cat, acl, getsd, laps, groupmembers, find
+- [x] Factored out `_resolve_path` (resolve a path like cd, print the error) used by cat, acl,
+      laps, groupmembers, grant/revoke, chown, rbcd, keycred, uac, setattr
 - [ ] Restructure the README: one section per command group (navigation, enumeration, ACLs/LAPS,
       writing, opsec, cache, output), with the parameters and allowed values of each command
 - [x] Group `help` into categories (Session, Navigation, Enumeration, Lookup, ADCS, DNS, Writing,
