@@ -261,6 +261,21 @@ the DACL, so `WriteDacl` on the target is enough (writing the owner would need `
 DC rejects it). `grant` is idempotent (an ACE already present is not added again). The change goes
 through opsec like any other, and `undo` restores the previous DACL.
 
+## Owner, RBCD and key credentials
+
+```text
+chown <path> <principal>        set the owner of an object's security descriptor
+rbcd [path]                     list the principals allowed to act on behalf of the object
+rbcd <path> add <principal>     allow a principal (resource-based constrained delegation)
+rbcd <path> clear               remove all RBCD
+keycred [path]                  list the key credentials (msDS-KeyCredentialLink)
+keycred <path> clear            remove all of them (clean up a shadow-credentials attack)
+```
+
+`chown` needs `WriteOwner`; owning an object lets you rewrite its DACL. `rbcd add` writes an
+allow-all ACE for the principal into `msDS-AllowedToActOnBehalfOfOtherIdentity` (adding a key
+credential is msldap's `shadowcred`). All of these go through opsec and are undoable.
+
 ## Editing attributes
 
 `setattr`, `addattr` and `delattr` change an attribute directly, `uac` the account flags:

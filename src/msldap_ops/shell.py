@@ -72,7 +72,7 @@ HELP_CATEGORIES = [
 		'certify', 'certify2', 'addenrollmentright', 'addcerttemplatenameflagaltname']),
 	('DNS', ['dnsquery', 'dnsqueryall', 'dnsdump', 'dnszones', 'dnssoa', 'dnsgetserial',
 		'dnsadd', 'dnsremove', 'dnsdelete', 'dnsmodify', 'dnsrestore']),
-	('Writing (changes the directory)', ['grant', 'revoke', 'setattr', 'addattr', 'delattr', 'uac',
+	('Writing (changes the directory)', ['grant', 'revoke', 'chown', 'rbcd', 'keycred', 'setattr', 'addattr', 'delattr', 'uac',
 		'addusertogroup', 'deluserfromgroup', 'adduser', 'deluser',
 		'addcomputer', 'changeuserpw', 'enableuser', 'disableuser', 'unlockuser', 'addspn', 'delspn',
 		'addhostname', 'changesamaccountname', 'setsd', 'changeowner', 'addprivdcsync',
@@ -1117,6 +1117,135 @@ class MSLDAPOpsConsole(MSLDAPClientConsole):
 
 	def _revoke_completions(self):
 		return self._grant_completions()
+
+	async def do_chown(self, path, principal):
+		"""Changes the owner of an object's security descriptor to a principal.
+
+		chown <path> <principal>   principal: a SID or an exact account name
+		Owning an object lets you rewrite its DACL. Needs WriteOwner (or the SeRestore right).
+		Undoable (the owner is restored).
+		"""
+		if self.connection is None:
+			print('Not connected, run login first')
+			return False
+		try:
+			target = navigation.resolve(path, self._current_dn, self._naming_contexts())
+		except ValueError as e:
+			print(e)
+			return False
+		sid = await self._resolve_principal(principal)
+		if sid is None:
+			return False
+		with hooks.labeled('chown %s to %s' % (target, sid)):
+			ok, err = await self.connection.change_priv_owner(sid, target)
+		if err is not None:
+			print('chown failed: %s' % err)
+			return False
+		print('chown: owner of %s set to %s' % (target, sid))
+		return bool(ok)
+
+	def _chown_completions(self):
+		return navigation.PositionalCompleter([self._cd_completions()])
+
+	async def do_rbcd(self, path='.', action=None, principal=None):
+		"""Resource-based constrained delegation (msDS-AllowedToActOnBehalfOfOtherIdentity).
+
+		rbcd [path]                  lists the principals allowed to act on behalf of the object
+		rbcd <path> add <principal>  allows a principal (SID or account name)
+		rbcd <path> clear            removes the attribute (revokes all RBCD)
+		Changes are undoable.
+		"""
+		if self.connection is None:
+			print('Not connected, run login first')
+			return False
+		try:
+			target = navigation.resolve(path, self._current_dn, self._naming_contexts())
+		except ValueError as e:
+			print(e)
+			return False
+		sd = None
+		async for entry, err in self.connection.pagedsearch('(objectClass=*)',
+				['msDS-AllowedToActOnBehalfOfOtherIdentity'], tree=target, search_scope=BASE):
+			if err is not None:
+				print(records.search_error(err, target))
+				return False
+			sd = entry['attributes'].get('msDS-AllowedToActOnBehalfOfOtherIdentity')
+		if action is None:
+			sids = [str(ace.Sid) for ace in sd.Dacl.aces] if sd is not None and sd.Dacl else []
+			if not sids:
+				print('%s: no RBCD configured' % target)
+				return True
+			names = await acl.resolve(self.connection, sids)
+			print('RBCD on %s - allowed to act on its behalf:' % target)
+			ui.emit(['  %s  (%s)' % (names.get(s, s), s) for s in sids])
+			return True
+		if action == 'clear':
+			with hooks.labeled('rbcd clear on %s' % target):
+				ok, err = await self.connection.modify(target, {'msDS-AllowedToActOnBehalfOfOtherIdentity': [('replace', [])]})
+			return self._report(err, ok, 'rbcd clear on %s' % target)
+		if action == 'add':
+			if not principal:
+				print('Usage: rbcd <path> add <principal>')
+				return False
+			sid = await self._resolve_principal(principal)
+			if sid is None:
+				return False
+			new_bytes = aces.rbcd_with(sd.to_bytes() if sd is not None else None, sid)
+			with hooks.labeled('rbcd add %s on %s' % (sid, target)):
+				ok, err = await self.connection.modify(target, {'msDS-AllowedToActOnBehalfOfOtherIdentity': [('replace', new_bytes)]})
+			return self._report(err, ok, 'rbcd add %s on %s' % (sid, target))
+		print("Unknown action '%s', expected add or clear" % action)
+		return False
+
+	def _rbcd_completions(self):
+		return navigation.PositionalCompleter([self._cd_completions(), WordCompleter(['add', 'clear'])])
+
+	async def do_keycred(self, path='.', action=None):
+		"""Key credentials (msDS-KeyCredentialLink), used for shadow-credentials attacks.
+
+		keycred [path]        lists the key credentials on the object
+		keycred <path> clear  removes all of them
+		Adding one is msldap's 'shadowcred'. Clearing is undoable.
+		"""
+		if self.connection is None:
+			print('Not connected, run login first')
+			return False
+		try:
+			target = navigation.resolve(path, self._current_dn, self._naming_contexts())
+		except ValueError as e:
+			print(e)
+			return False
+		values = None
+		async for entry, err in self.connection.pagedsearch('(objectClass=*)', ['msDS-KeyCredentialLink'],
+				tree=target, search_scope=BASE):
+			if err is not None:
+				print(records.search_error(err, target))
+				return False
+			values = entry['attributes'].get('msDS-KeyCredentialLink')
+		values = values if isinstance(values, list) else ([values] if values else [])
+		if action is None:
+			if not values:
+				print('%s: no key credentials' % target)
+				return True
+			print('%s: %d key credential%s' % (target, len(values), '' if len(values) == 1 else 's'))
+			ui.emit(['  %s' % (v if len(str(v)) <= 80 else str(v)[:80] + '...') for v in values])
+			return True
+		if action == 'clear':
+			with hooks.labeled('keycred clear on %s' % target):
+				ok, err = await self.connection.modify(target, {'msDS-KeyCredentialLink': [('replace', [])]})
+			return self._report(err, ok, 'keycred clear on %s' % target)
+		print("Unknown action '%s', expected clear" % action)
+		return False
+
+	def _keycred_completions(self):
+		return navigation.PositionalCompleter([self._cd_completions(), WordCompleter(['clear'])])
+
+	def _report(self, err, ok, description):
+		if err is not None:
+			print('%s failed: %s' % (description.split(' on ')[0], err))
+			return False
+		print(description)
+		return bool(ok)
 
 	async def do_changes(self):
 		"""Lists the directory changes made in this session and whether they can be undone.

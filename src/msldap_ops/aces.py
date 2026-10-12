@@ -94,3 +94,36 @@ def revoke(sd_bytes, sid, right):
 			keep.append(ace)
 	sd.Dacl.aces = keep
 	return sd.to_bytes(), removed
+
+
+def rbcd_with(sd_bytes, sid):
+	"""Security-descriptor bytes for msDS-AllowedToActOnBehalfOfOtherIdentity with an allow-all ACE
+	for the SID added (a new descriptor if there was none, the SID not duplicated)."""
+	from winacl.dtyp.acl import ACL
+	from winacl.dtyp.sid import SID
+	if sd_bytes:
+		sd = SECURITY_DESCRIPTOR.from_bytes(sd_bytes)
+		if sd.Dacl is None:
+			sd.Dacl = _empty_acl()
+	else:
+		sd = SECURITY_DESCRIPTOR()
+		sd.Owner = SID.from_string('S-1-5-32-544')
+		sd.Group = None
+		sd.Sacl = None
+		sd.Dacl = _empty_acl()
+		# SE_DACL_PRESENT | SE_SELF_RELATIVE
+		sd.Control = 0x8004
+	if any(str(a.Sid).upper() == sid.upper() for a in sd.Dacl.aces):
+		return sd.to_bytes()
+	sd.Dacl.aces.append(ACE.from_sddl('(A;;0xf01ff;;;%s)' % sid))
+	return sd.to_bytes()
+
+
+def _empty_acl():
+	from winacl.dtyp.acl import ACL
+	acl = ACL()
+	acl.AclRevision = 4
+	acl.Sbz1 = 0
+	acl.Sbz2 = 0
+	acl.aces = []
+	return acl

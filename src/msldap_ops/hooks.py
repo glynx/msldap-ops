@@ -406,27 +406,20 @@ async def _read_raw(connection, dn, attributes):
 	return old
 
 
-async def _prepare_undo(connection, info):
-	"""(undo WriteInfo-compatible action, reason) for a change, computed before it is applied.
+async def _prepare_undo(connection, info, controls):
+	"""(undo action, reason) for a change, computed before it is applied.
 
-	The action is ('operation', dn, changes) that reverses info, or None with a reason when the
-	change cannot be undone automatically. For modify, 'add'/'delete' of values invert directly;
-	'replace' needs the old value, read here and written back verbatim (RawValue)."""
+	The action is ('operation', dn, changes, controls) that reverses info, or None with a reason
+	when the change cannot be undone automatically. For modify, 'add'/'delete' of values invert
+	directly; 'replace' needs the old value, read here and written back verbatim (RawValue). The
+	undo reuses the forward controls, so a security-descriptor change is restored with the same SD
+	flags (DACL for grant/revoke, owner for a chown) instead of the whole descriptor."""
 	if info.operation == 'add':
-		return ('delete', info.dn, None), None
+		return ('delete', info.dn, None, None), None
 	if info.operation == 'delete':
 		return None, 'deleting an object cannot be undone automatically'
 	if info.operation != 'modify':
 		return None, 'not undoable'
-	# a security-descriptor change is restored through the SD API with DACL flags only (so WriteDacl
-	# is enough), not a raw modify of the whole descriptor
-	if info.modify_ops and all(attr.lower() == 'ntsecuritydescriptor' and op == 'replace'
-			for op, attr, _ in info.modify_ops):
-		old = await _read_raw(connection, info.dn, ['nTSecurityDescriptor'])
-		values = (old or {}).get('ntsecuritydescriptor')
-		if not values:
-			return None, 'old security descriptor not readable'
-		return ('setsd', info.dn, values[0]), None
 	needs_old = [attr for op, attr, _ in info.modify_ops
 		if op == 'replace' and attr.lower() not in SECRET_ATTRIBUTES]
 	old = await _read_raw(connection, info.dn, needs_old) if needs_old else {}
@@ -449,7 +442,7 @@ async def _prepare_undo(connection, info):
 	if reasons:
 		# a partial restore would be misleading, so the whole change counts as not undoable
 		return None, 'cannot undo: ' + ', '.join(reasons)
-	return ('modify', info.dn, inverse), None
+	return ('modify', info.dn, inverse, list(controls) if controls else None), None
 
 
 def _wrap_write(original):
@@ -476,7 +469,7 @@ def _wrap_write(original):
 				_notify('write_end', info)
 				return False, info.error
 		# read the old values that the inverse needs, before the change goes out
-		undo, undo_reason = await _prepare_undo(self, info)
+		undo, undo_reason = await _prepare_undo(self, info, params.get('controls'))
 		try:
 			result = await original(self, *args, **kwargs)
 		except Exception as e:

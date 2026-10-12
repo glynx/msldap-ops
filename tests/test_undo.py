@@ -65,37 +65,42 @@ def test_add_value_inverts_to_delete(wired):
 	run_modify(conn, 'CN=Admins,DC=x', {'member': [('add', ['CN=jon,DC=x'])]})
 	assert len(wired) == 1
 	change = wired.changes[0]
-	assert change.undoable and change.undo == ('modify', 'CN=Admins,DC=x', {'member': [('delete', ['CN=jon,DC=x'])]})
+	assert change.undoable and change.undo == ('modify', 'CN=Admins,DC=x', {'member': [('delete', ['CN=jon,DC=x'])]}, None)
 	assert conn.reads == []  # add/delete need no read
 
 
 def test_delete_value_inverts_to_add(wired):
 	conn = Conn()
 	run_modify(conn, 'CN=Admins,DC=x', {'member': [('delete', ['CN=jon,DC=x'])]})
-	assert wired.changes[0].undo == ('modify', 'CN=Admins,DC=x', {'member': [('add', ['CN=jon,DC=x'])]})
+	assert wired.changes[0].undo == ('modify', 'CN=Admins,DC=x', {'member': [('add', ['CN=jon,DC=x'])]}, None)
 
 
-def test_sd_replace_is_restored_via_setsd(wired):
+def test_sd_replace_undo_reuses_the_forward_controls(wired):
 	conn = Conn(old={'ntsecuritydescriptor': [b'OLDSD']})
-	run_modify(conn, 'CN=g,DC=x', {'nTSecurityDescriptor': [('replace', b'NEWSD')]})
-	assert conn.reads and conn.reads[0][2] is True  # read with the SD flags control
-	# a security-descriptor change is undone through setsd with the old bytes (DACL only)
-	assert wired.changes[0].undo == ('setsd', 'CN=g,DC=x', b'OLDSD')
+	# the forward change carried a (fake) SD flags control; the undo must reuse it
+	control = object()
+	asyncio.run(hooks._wrap_write(Conn.modify)(conn, 'CN=g,DC=x',
+		{'nTSecurityDescriptor': [('replace', b'NEWSD')]}, [control]))
+	assert conn.reads and conn.reads[0][2] is True  # old SD read with the SD flags control
+	op, dn, changes, controls = wired.changes[0].undo
+	assert op == 'modify' and dn == 'CN=g,DC=x' and controls == [control]
+	value = changes['nTSecurityDescriptor'][0][1]
+	assert isinstance(value, RawValue) and value.encode() == [b'OLDSD']
 
 
 def test_other_replace_restores_old_value(wired):
 	conn = Conn(old={'description': [b'old text']})
 	run_modify(conn, 'CN=g,DC=x', {'description': [('replace', 'new text')]})
-	undo = wired.changes[0].undo
-	assert undo[0] == 'modify' and undo[1] == 'CN=g,DC=x'
-	op, value = undo[2]['description'][0]
+	op_, dn_, changes_, controls_ = wired.changes[0].undo
+	assert op_ == 'modify' and dn_ == 'CN=g,DC=x' and controls_ is None
+	op, value = changes_['description'][0]
 	assert op == 'replace' and isinstance(value, RawValue) and value.encode() == [b'old text']
 
 
 def test_add_object_inverts_to_delete(wired):
 	conn = Conn()
 	run_add(conn, 'CN=evil,DC=x', {'objectClass': ['top', 'computer']})
-	assert wired.changes[0].undo == ('delete', 'CN=evil,DC=x', None)
+	assert wired.changes[0].undo == ('delete', 'CN=evil,DC=x', None, None)
 
 
 def test_delete_object_is_not_undoable(wired):
@@ -111,22 +116,16 @@ def test_secret_change_is_not_undoable(wired):
 	assert conn.reads == []  # the secret is not read
 
 
-def test_apply_undo_setsd_uses_dacl_flags(wired):
-	calls = {}
-
-	class SDConn(Conn):
-		async def set_objectacl_by_dn(self, dn, data, flags=None):
-			calls['dn'] = dn
-			calls['data'] = data
-			calls['flags'] = flags
-			return True, None
-
-	conn = SDConn(old={'ntsecuritydescriptor': [b'OLDSD']})
-	run_modify(conn, 'CN=g,DC=x', {'nTSecurityDescriptor': [('replace', b'NEWSD')]})
+def test_apply_undo_sd_reuses_controls(wired):
+	control = object()
+	conn = Conn(old={'ntsecuritydescriptor': [b'OLDSD']})
+	asyncio.run(hooks._wrap_write(Conn.modify)(conn, 'CN=g,DC=x',
+		{'nTSecurityDescriptor': [('replace', b'NEWSD')]}, [control]))
 	change = wired.last_undoable()
 	ok, err = asyncio.run(changes.apply_undo(conn, change))
-	from msldap.wintypes.asn1.sdflagsrequest import SDFlagsRequest
-	assert ok and calls['data'] == b'OLDSD' and calls['flags'] == SDFlagsRequest.DACL_SECURITY_INFORMATION
+	# the undo wrote the old bytes back with the same control
+	assert ok and conn.sent[-1][0] == 'modify' and conn.sent[-1][1] == 'CN=g,DC=x'
+	assert conn.sent[-1][2]['nTSecurityDescriptor'][0][1].encode() == [b'OLDSD']
 
 
 def test_undo_removes_the_change_and_records_nothing_new(wired):

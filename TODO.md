@@ -39,7 +39,7 @@
 - [x] Generic grant/revoke of an ACE by right name (fullcontrol, dcsync, resetpassword,
       writemembers, rbcd, writekeycredential, ...); reads the SD, adds/removes the ACE, undoable
 - [x] Set an attribute (setattr/addattr/delattr) and userAccountControl flags (uac)
-- [ ] Writing commands still missing: list/clear shadow credentials and RBCD, change owner
+- [x] chown (change owner), rbcd (list/add/clear) and keycred (list/clear), all undoable
 
 ## Navigation
 

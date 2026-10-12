@@ -83,16 +83,19 @@ class ChangeLog:
 
 
 async def apply_undo(connection, change):
-	"""Applies the inverse of a change through the connection (add/modify/delete/setsd). (ok, err)."""
-	operation, dn, changes = change.undo
+	"""Applies the inverse of a change through the connection (add/modify/delete). The undo reuses
+	the forward controls (e.g. the SD flags control), so a security-descriptor change restores the
+	same portion. (ok, err)."""
+	operation, dn, changes, controls = change.undo
 	if operation == 'modify':
+		if controls:
+			# the captured controls are Control objects; the connection-level modify takes them as
+			# is, while the client-level modify would wrap them again
+			target = getattr(connection, '_con', connection)
+			return await target.modify(dn, changes, controls=controls)
 		return await connection.modify(dn, changes)
 	if operation == 'delete':
 		return await connection.delete(dn)
 	if operation == 'add':
 		return await connection.add(dn, changes)
-	if operation == 'setsd':
-		# restore the DACL only, so WriteDacl is enough (changes holds the old descriptor bytes)
-		from msldap.wintypes.asn1.sdflagsrequest import SDFlagsRequest
-		return await connection.set_objectacl_by_dn(dn, changes, flags=SDFlagsRequest.DACL_SECURITY_INFORMATION)
 	return False, Exception('unknown undo operation %r' % operation)
